@@ -146,7 +146,7 @@ VOID ProcessPacketBytes(UCHAR * Buffer, int Read)
 	// Assumes that Complete KISS or Host packet will be received (pretty safe
 	// with TCP (I hope!)
 
-	// But could bemore than one in buffer
+	// But could be more than one in buffer
 
 	if (Buffer[0] == 192)
 		ProcessKISSBytes(Buffer, Read);

@@ -12,6 +12,8 @@ FILE * fp1;
 
 extern short Dummy;
 
+int intSoftClipCnt = 0;
+
 void Flush();
 
 void GetTwoToneLeaderWithSync(int intSymLen)
@@ -560,6 +562,23 @@ UCHAR GetSym8PSK(int intDataPtr, int k, int intCar, UCHAR * bytEncodedBytes, int
 	return bytSym;
 }
 
+
+// Function to soft clip combined waveforms. 
+int SoftClip(int intInput)
+{
+	if (intInput > 30000) // soft clip above/below 30000
+	{
+		intInput = min(32700, 30000 + 20 * sqrt(intInput - 30000));
+		intSoftClipCnt += 1;
+	}
+	else if(intInput < -30000)
+	{
+		intInput = max(-32700, -30000 - 20 * sqrt(-(intInput + 30000)));
+		intSoftClipCnt += 1;
+	}
+
+	return intInput;
+}
 // Function to Modulate data encoded for PSK and 16QAM, create
 // the 16 bit samples and send to sound interface
    
@@ -589,22 +608,44 @@ void ModPSKDataAndPlay(int Type, unsigned char * bytEncodedBytes, int Len, int i
 	intDataBytesPerCar = (Len - 2) / intNumCar;		// We queue the samples here, so dont copy below
 
 	switch(intNumCar)
-	{		
+	{
+		// These new scaling factor combined with soft clipping to provide near optimum scaling Jan 6, 2018 
+        // The Test form was changed to calculate the Peak power to RMS power (PAPR) of the test waveform and count the number of "soft clips" out of ~ 50,000 samples. 
+        // These values arrived at emperically using the Test form (Quick brown fox message) to minimize PAPR at a minor decrease in maximum constellation quality
+   
+
+		// Rick uses these for QAM
+		
+		//dblCarScalingFactor = 1.2 ' Starting at 1500 Hz  Selected to give < 9% clipped values yielding a PAPR = 1.77 Constellation Quality >98
+        //dblCarScalingFactor = 0.67 ' Carriers at 1400 and 1600 Selected to give < 2.5% clipped values yielding a PAPR = 2.17, Constellation Quality >92
+       // dblCarScalingFactor = 0.4 ' Starting at 1200 Hz  Selected to give < 1.5% clipped values yielding a PAPR = 2.48, Constellation Quality >92
+       // dblCarScalingFactor = 0.27 ' Starting at 800 Hz  Selected to give < 1% clipped values yielding a PAPR = 2.64, Constellation Quality >94
+
+
 	case 1:
 		intCarStartIndex = 4;
-		dblCarScalingFactor = 1.0f; // Starting at 1500 Hz  (scaling factors determined emperically to minimize crest factor)  TODO:  needs verification
-		break;
+//		dblCarScalingFactor = 1.0f; // Starting at 1500 Hz  (scaling factors determined emperically to minimize crest factor)  TODO:  needs verification
+		dblCarScalingFactor = 1.2f; // Starting at 1500 Hz  Selected to give < 13% clipped values yielding a PAPR = 1.6 Constellation Quality >98
 	case 2:
 		intCarStartIndex = 3;
-		dblCarScalingFactor = 0.53f; // Starting at 1400 Hz
+//		dblCarScalingFactor = 0.53f;
+		if (strcmp(strMod, "16QAM") == 0)
+			dblCarScalingFactor = 0.67f; // Carriers at 1400 and 1600 Selected to give < 2.5% clipped values yielding a PAPR = 2.17, Constellation Quality >92
+		else
+			dblCarScalingFactor = 0.65f; // Carriers at 1400 and 1600 Selected to give < 4% clipped values yielding a PAPR = 2.0, Constellation Quality >95
 		break;
 	case 4:
 		intCarStartIndex = 2;
-		dblCarScalingFactor = 0.29f; // Starting at 1200 Hz
+//		dblCarScalingFactor = 0.29f; // Starting at 1200 Hz
+		dblCarScalingFactor = 0.4f;  // Starting at 1200 Hz  Selected to give < 3% clipped values yielding a PAPR = 2.26, Constellation Quality >95
 		break;
 	case 8:
 		intCarStartIndex = 0;
-		dblCarScalingFactor = 0.17f; // Starting at 800 Hz
+//		dblCarScalingFactor = 0.17f; // Starting at 800 Hz
+		if (strcmp(strMod, "16QAM") == 0)
+			dblCarScalingFactor = 0.27f; // Starting at 800 Hz  Selected to give < 1% clipped values yielding a PAPR = 2.64, Constellation Quality >94
+		else
+			dblCarScalingFactor = 0.25f; // Starting at 800 Hz  Selected to give < 2% clipped values yielding a PAPR = 2.5, Constellation Quality >95
 	} 
 
 	intSampPerSym = 120;
@@ -652,7 +693,8 @@ void ModPSKDataAndPlay(int Type, unsigned char * bytEncodedBytes, int Len, int i
 		intLeaderLenMS = LeaderLength;
 	else
 		intLeaderLenMS = intLeaderLen;
-	
+
+	intSoftClipCnt = 0;
 	
 	// Create the leader
 
@@ -737,11 +779,13 @@ PktLoopBack:		// Reenter here to send rest of variable length packet frame
 					}
 					intSample = intSample * dblCarScalingFactor; // on the last carrier rescale value based on # of carriers to bound output
 
-					if (intSample > 32700)
-						intSample = 32700;
+	//				if (intSample > 32700)
+	//					intSample = 32700;
 				
-					if (intSample < -32700)
-					  	intSample = -32700;
+	//				if (intSample < -32700)
+	//				  	intSample = -32700;
+
+                    intSample = SoftClip(intSample);
 	
 					SampleSink(intSample);		
 				}       
@@ -795,11 +839,13 @@ PktLoopBack:		// Reenter here to send rest of variable length packet frame
 					}
 					intSample = intSample * dblCarScalingFactor; // on the last carrier rescale value based on # of carriers to bound output
 
-					if (intSample > 32700)
-						intSample = 32700;
+	//				if (intSample > 32700)
+	//					intSample = 32700;
 				
-					if (intSample < -32700)
-					  	intSample = -32700;
+	//				if (intSample < -32700)
+	//				  	intSample = -32700;
+
+                    intSample = SoftClip(intSample);
 					
 					SampleSink(intSample);		
 				}
@@ -852,11 +898,13 @@ PktLoopBack:		// Reenter here to send rest of variable length packet frame
 
 					intSample = intSample * dblCarScalingFactor; // on the last carrier rescale value based on # of carriers to bound output
 
-					if (intSample > 32700)
-						intSample = 32700;
+	//				if (intSample > 32700)
+	//					intSample = 32700;
 				
-					if (intSample < -32700)
-					  	intSample = -32700;
+	//				if (intSample < -32700)
+	//				  	intSample = -32700;
+
+                    intSample = SoftClip(intSample);
 					
 					SampleSink(intSample);		
 				}      
@@ -880,23 +928,35 @@ PktLoopBack:		// Reenter here to send rest of variable length packet frame
 		{		
 		case 1:
 			intCarStartIndex = 4;
-			dblCarScalingFactor = 1.0f; // Starting at 1500 Hz  (scaling factors determined emperically to minimize crest factor)  TODO:  needs verification
-			break;
+//			dblCarScalingFactor = 1.0f; // Starting at 1500 Hz  (scaling factors determined emperically to minimize crest factor)  TODO:  needs verification
+			dblCarScalingFactor = 1.2f; // Starting at 1500 Hz  Selected to give < 13% clipped values yielding a PAPR = 1.6 Constellation Quality >98
 		case 2:
 			intCarStartIndex = 3;
-			dblCarScalingFactor = 0.53f; // Starting at 1400 Hz
+//			dblCarScalingFactor = 0.53f;
+			if (strcmp(strMod, "16QAM") == 0)
+				dblCarScalingFactor = 0.67f; // Carriers at 1400 and 1600 Selected to give < 2.5% clipped values yielding a PAPR = 2.17, Constellation Quality >92
+			else
+				dblCarScalingFactor = 0.65f; // Carriers at 1400 and 1600 Selected to give < 4% clipped values yielding a PAPR = 2.0, Constellation Quality >95
 			break;
 		case 4:
 			intCarStartIndex = 2;
-			dblCarScalingFactor = 0.29f; // Starting at 1200 Hz
+//			dblCarScalingFactor = 0.29f; // Starting at 1200 Hz
+			dblCarScalingFactor = 0.4f;  // Starting at 1200 Hz  Selected to give < 3% clipped values yielding a PAPR = 2.26, Constellation Quality >95
 			break;
 		case 8:
 			intCarStartIndex = 0;
-			dblCarScalingFactor = 0.17f; // Starting at 800 Hz
+//			dblCarScalingFactor = 0.17f; // Starting at 800 Hz
+			if (strcmp(strMod, "16QAM") == 0)
+				dblCarScalingFactor = 0.27f; // Starting at 800 Hz  Selected to give < 1% clipped values yielding a PAPR = 2.64, Constellation Quality >94
+			else
+				dblCarScalingFactor = 0.25f; // Starting at 800 Hz  Selected to give < 2% clipped values yielding a PAPR = 2.5, Constellation Quality >95
 		} 
 		goto PktLoopBack;		// Reenter to send rest of variable length packet frame
 	}
 	Flush();
+	if (intSoftClipCnt > 0)
+		WriteDebugLog(LOGDEBUG, "Soft Clips %d ", intSoftClipCnt);
+
 }
 
 

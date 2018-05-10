@@ -4,7 +4,9 @@
 #define ARDOPCHEADERDEFINED
 
 #define ProductName "ARDOP TNC"
-#define ProductVersion "1.0.2.5l-BPQ"
+#define ProductVersion "1.0.4.1b-BPQ"
+
+//#define USE_SOUNDMODEM
 
 //	Sound interface buffer size
 
@@ -385,6 +387,7 @@ extern BOOL Use600Modes;
 extern BOOL FSKOnly;
 extern BOOL fastStart;
 extern BOOL ConsoleLogLevel;
+extern BOOL FileLogLevel;
 extern BOOL EnablePingAck;
 
 extern int dttLastPINGSent;

@@ -479,7 +479,15 @@ int logcheck(int x)
 }
 
 #ifdef WIN32
+
+UCHAR EEPROM[32] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 'A'};
+
 void SaveEEPROM(int reg, int val)
 {
+	EEPROM[reg] = val;
+}
+int GetEEPROM(int Reg)
+{
+	return EEPROM[Reg];
 }
 #endif

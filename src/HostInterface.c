@@ -14,6 +14,8 @@ HANDLE OpenCOMPort(VOID * pPort, int speed, BOOL SetDTR, BOOL SetRTS, BOOL Quiet
 BOOL WriteCOMBlock(HANDLE fd, char * Block, int BytesToWrite);
 void SetupGPIOPTT();
 VOID ConvertCallstoAX25();
+int GetEEPROM(int Reg);
+void SaveEEPROM(int reg, int val);
 
 void Break();
 
@@ -688,6 +690,71 @@ void ProcessCommandFromHost(char * strCMD)
 		goto cmddone;
 	}
 
+#ifdef TEENSY
+
+	if (strcmp(strCMD, "EEPROM") == 0)
+	{
+		if (ptrParams)
+		{
+			char * ptr, * context;
+			int Reg = 0, Val = 0;
+
+			ptr = strtok_s(ptrParams, ", ", &context);
+
+			if (ptr)
+			{
+				Reg = atoi(ptr);
+				ptr = strtok_s(NULL, ", ", &context);
+				if (ptr)
+				{
+					Val = atoi(ptr);
+				}
+			}
+
+			if (Reg == 0 || Reg == 12 || Reg > 14 || ptr == 0)
+			{
+				// Bad command
+		
+				sprintf(strFault, "Syntax Err: %s", cmdCopy);
+				goto cmddone;
+			}
+
+			SaveEEPROM(Reg, Val);
+		}
+
+		// Display EEPROM Settings
+
+		sprintf(cmdReply, "01 TXDelay - Zero means use ADC %3d\n", GetEEPROM(1));
+		SendReplyToHost(cmdReply);
+		sprintf(cmdReply, "02 Persistance                  %3d\n", GetEEPROM(2));
+		SendReplyToHost(cmdReply);
+		sprintf(cmdReply, "03 Slottime (in 10 mS)          %3d\n", GetEEPROM(3));
+		SendReplyToHost(cmdReply);
+		sprintf(cmdReply, "04 TXTail                       %3d\n", GetEEPROM(4));
+		SendReplyToHost(cmdReply);
+		sprintf(cmdReply, "05 Full Duplex - Not used       %3d\n", GetEEPROM(5));
+		SendReplyToHost(cmdReply);
+		sprintf(cmdReply, "06 Our Channel (Hex)             %02x\n", GetEEPROM(6));
+		SendReplyToHost(cmdReply);
+		sprintf(cmdReply, "07 I2C Address (0 = async) Hex   %02x\n", GetEEPROM(7));
+		SendReplyToHost(cmdReply);
+		sprintf(cmdReply, "08 Mode Speed                  %4d\n", GetEEPROM(8) * 100);
+		SendReplyToHost(cmdReply);
+		sprintf(cmdReply, "09 RX Level (Config)            %3d\n", GetEEPROM(9));
+		SendReplyToHost(cmdReply);
+		sprintf(cmdReply, "10 TX Level                     %3d\n", GetEEPROM(10));
+		SendReplyToHost(cmdReply);
+		sprintf(cmdReply, "11 RX Level (Actual)            %3d\n", GetEEPROM(11));
+		SendReplyToHost(cmdReply);
+		sprintf(cmdReply, "13 Centre Freq                 %4d\n", GetEEPROM(13) * 10);
+		SendReplyToHost(cmdReply);
+		sprintf(cmdReply, "14 TNC Mode                       %c\n", GetEEPROM(14));
+		SendReplyToHost(cmdReply);
+		goto cmddone;			
+	}
+
+#endif
+	
 	if (strcmp(strCMD, "ENABLEPINGACK") == 0)
 	{
 		if (ptrParams == NULL)
@@ -984,6 +1051,31 @@ void ProcessCommandFromHost(char * strCMD)
 			sprintf(cmdReply, "LISTEN now FALSE");
 		
 		SendReplyToHost(cmdReply);
+		goto cmddone;
+	}
+
+	if (strcmp(strCMD, "LOGLEVEL") == 0)
+	{
+		int i;
+
+		if (ptrParams == 0)
+		{
+			sprintf(cmdReply, "%s %d", strCMD, FileLogLevel);
+			SendReplyToHost(cmdReply);
+		}
+		else
+		{
+			i = atoi(ptrParams);
+
+			if (i >= LOGEMERGENCY  && i <= LOGDEBUG)
+			{
+				FileLogLevel = i;
+				sprintf(cmdReply, "%s now %d", strCMD, FileLogLevel);
+				SendReplyToHost(cmdReply);
+			}
+			else
+				sprintf(strFault, "Syntax Err: %s %s", strCMD, ptrParams);	
+		}
 		goto cmddone;
 	}
 

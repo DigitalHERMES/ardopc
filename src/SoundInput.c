@@ -1357,7 +1357,9 @@ ProcessFrame:
 				if (!blnTimeoutTriggered)
 					ProcessRcvdARQFrame(intFrameType, bytData, frameLen, blnFrameDecodedOK);  // Process connected ARQ frames here 
 
-				if (ProtocolState == DISC)		  // allows ARQ mode to operate like FEC when not connected
+				// If still in DISC monitor it
+				
+				if (ProtocolState == DISC && Monitor)		  // allows ARQ mode to operate like FEC when not connected
 					if (intFrameType == 0x30)				
 						AddTagToDataAndSendToHost(bytData, "IDF", frameLen);			
 					else if (intFrameType >= 0x31 && intFrameType <= 0x38)

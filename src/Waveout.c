@@ -587,6 +587,9 @@ VOID WriteDebugLog(int LogLevel, const char * format, ...)
 	if (!DebugLog)
 		return;
 
+	if (LogLevel > FileLogLevel)
+		return;
+
 	GetSystemTime(&st);
 	
 	if (logfile == NULL)

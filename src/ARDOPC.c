@@ -89,6 +89,7 @@ BOOL Use600Modes = FALSE;
 BOOL FSKOnly = FALSE;
 BOOL fastStart = TRUE;
 BOOL ConsoleLogLevel = LOGDEBUG;
+BOOL FileLogLevel = LOGDEBUG;
 BOOL EnablePingAck = TRUE;
 
 BOOL gotGPIO = FALSE;
