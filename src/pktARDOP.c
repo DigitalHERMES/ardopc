@@ -40,7 +40,7 @@ void PacketStartTX();
 BOOL GetNextKISSFrame();
 VOID SendAckModeAck();
 
-extern unsigned char bytEncodedBytes[1800];		// I think the biggest is 600 bd 768 + overhead
+extern unsigned char bytEncodedBytes[4500];		// I think the biggest is 600 bd 768 + overhead
 extern int EncLen;
 
 extern UCHAR PacketMon[360];
@@ -127,7 +127,7 @@ VOID PktARDOPEncode(UCHAR * Data, int Len)
 
 	// Header is FSK
 	
-	Mod4FSKDataAndPlay(PktFrameHeader, bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
+	Mod4FSKDataAndPlay(bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
 }
 
 // Called when link idle to see if any packet frames to send

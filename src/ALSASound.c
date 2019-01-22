@@ -18,6 +18,8 @@
 
 #include "ARDOPC.h"
 
+#define SHARECAPTURE		// if defined capture device is opened and closed for each transission
+
 #define HANDLE int
 
 void gpioSetMode(unsigned gpio, unsigned mode);
@@ -54,11 +56,11 @@ void Sleep(int mS)
 }
 
 
-// Windows/ALSA works with signed samples +- 32767
-// STM32 DAC uses unsigned 0 - 4095
+// Windows and ALSA work with signed samples +- 32767
+// STM32 and Teensy DAC uses unsigned 0 - 4095
 
 short buffer[2][1200];			// Two Transfer/DMA buffers of 0.1 Sec
-short inbuffer[2][1200];			// Two Transfer/DMA buffers of 0.1 Sec
+short inbuffer[2][1200];		// Two Transfer/DMA buffers of 0.1 Sec
 
 BOOL Loopback = FALSE;
 //BOOL Loopback = TRUE;
@@ -230,6 +232,12 @@ unsigned int getTicks()
 void PlatformSleep()
 {
 	Sleep(1);
+		
+	if (PKTLEDTimer && Now > PKTLEDTimer)
+    {
+      PKTLEDTimer = 0;
+      SetLED(PKTLED, 0);				// turn off packet rxed led
+    }
 }
 
 // PTT via GPIO code
@@ -257,8 +265,13 @@ void SetupGPIOPTT()
 	}
 	else
 	{
+		if (pttGPIOPin < 0) {
+			pttGPIOInvert = TRUE;
+			pttGPIOPin = -pttGPIOPin;
+		}
+
 		gpioSetMode(pttGPIOPin, PI_OUTPUT);
-		gpioWrite(pttGPIOPin, 0);
+		gpioWrite(pttGPIOPin, pttGPIOInvert ? 1 : 0);
 		WriteDebugLog(LOGALERT, "Using GPIO pin %d for PTT", pttGPIOPin); 
 		RadioControl = TRUE;
 		useGPIO = TRUE;
@@ -450,6 +463,12 @@ void txSleep(int mS)
 		TCPHostPoll();
 
 	Sleep(mS);
+
+	if (PKTLEDTimer && Now > PKTLEDTimer)
+    {
+      PKTLEDTimer = 0;
+      SetLED(PKTLED, 0);				// turn off packet rxed led
+    }
 }
 
 // ALSA Code 
@@ -465,6 +484,8 @@ int m_recchannels = 1;
 
 char SavedCaptureDevice[256];	// Saved so we can reopen
 char SavedPlaybackDevice[256];
+
+int Savedplaychannels = 1;
 
 int SavedCaptureRate;
 int SavedPlaybackRate;
@@ -503,7 +524,7 @@ int GetOutputDeviceCollection()
 	snd_pcm_format_mask_t *fmask;
 	char NameString[256];
 
-	Debugprintf("getWriteDevices");
+	Debugprintf("Playback Devices\n");
 
 	CloseSoundCard();
 
@@ -534,7 +555,7 @@ int GetOutputDeviceCollection()
 	snd_pcm_format_mask_alloca(&fmask);
 
 	char hwdev[80];
-	unsigned min, max;
+	unsigned min, max, ratemin, ratemax;
 	int card, err, dev, nsubd;
 	snd_pcm_stream_t stream = SND_PCM_STREAM_PLAYBACK;
 	
@@ -585,8 +606,8 @@ int GetOutputDeviceCollection()
 
 			nsubd = snd_pcm_info_get_subdevices_count(pcminfo);
 		
-			Debugprintf("  Device %d, ID `%s', name `%s', %d subdevices (%d available)",
-				dev, snd_pcm_info_get_id(pcminfo), snd_pcm_info_get_name(pcminfo),
+			Debugprintf("  Device hw:%d,%d ID `%s', name `%s', %d subdevices (%d available)",
+				card, dev, snd_pcm_info_get_id(pcminfo), snd_pcm_info_get_name(pcminfo),
 				nsubd, snd_pcm_info_get_subdevices_avail(pcminfo));
 
 			sprintf(hwdev, "hw:%d,%d", card, dev);
@@ -606,24 +627,21 @@ int GetOutputDeviceCollection()
 			snd_pcm_hw_params_get_channels_min(pars, &min);
 			snd_pcm_hw_params_get_channels_max(pars, &max);
 			
+			snd_pcm_hw_params_get_rate_min(pars, &ratemin, NULL);
+			snd_pcm_hw_params_get_rate_max(pars, &ratemax, NULL);
+
 			if( min == max )
-				if(min == 1)
-					Debugprintf("    1 channel, ");
+				if( min == 1 )
+					Debugprintf("    1 channel,  sampling rate %u..%u Hz", ratemin, ratemax);
 				else
-					Debugprintf("    %d channels, ", min);
+					Debugprintf("    %d channels,  sampling rate %u..%u Hz", min, ratemin, ratemax);
 			else
-				Debugprintf("    %u..%u channels, ", min, max);
-			
-			snd_pcm_hw_params_get_rate_min(pars, &min, NULL);
-			snd_pcm_hw_params_get_rate_max(pars, &max, NULL);
-			Debugprintf("sampling rate %u..%u Hz", min, max);
+				Debugprintf("    %u..%u channels, sampling rate %u..%u Hz", min, max, ratemin, ratemax);
 
 			// Add device to list
 
 			sprintf(NameString, "hw:%d,%d %s(%s)", card, dev,
 				snd_pcm_info_get_name(pcminfo), snd_ctl_card_info_get_name(info));
-
-			Debugprintf("%s", NameString);
 
 			WriteDevices = realloc(WriteDevices,(WriteDeviceCount + 1) * sizeof(WriteDevices));
 			WriteDevices[WriteDeviceCount++] = strdup(NameString);
@@ -632,14 +650,14 @@ int GetOutputDeviceCollection()
 			pcm= NULL;
 
 nextdevice:
-
 			if (snd_ctl_pcm_next_device(handle, &dev) < 0)
 				break;
 	    }
-
 		snd_ctl_close(handle);
 
 nextcard:
+			
+		Debugprintf("");
 
 		if (snd_card_next(&card) < 0)		// No more cards
 			break;
@@ -670,18 +688,7 @@ int GetInputDeviceCollection()
 	snd_pcm_format_mask_t *fmask;
 	char NameString[256];
 
-	Debugprintf("getReadDevices");
-
-	// free old struct if called again
-
-//	while (ReadDeviceCount)
-//	{
-//ReadDeviceCount--;
-//		free(ReadDevices[ReadDeviceCount]);
-//	}
-
-//	if (ReadDevices)
-//		free(ReadDevices);
+	Debugprintf("Capture Devices\n");
 
 	ReadDevices = NULL;
 	ReadDeviceCount = 0;
@@ -699,7 +706,7 @@ int GetInputDeviceCollection()
 	snd_pcm_format_mask_alloca(&fmask);
 
 	char hwdev[80];
-	unsigned min, max;
+	unsigned min, max, ratemin, ratemax;
 	int card, err, dev, nsubd;
 	snd_pcm_stream_t stream = SND_PCM_STREAM_CAPTURE;
 	
@@ -744,8 +751,8 @@ int GetInputDeviceCollection()
 				goto nextdevice;
 	
 			nsubd= snd_pcm_info_get_subdevices_count(pcminfo);
-			Debugprintf("  Device %d, ID `%s', name `%s', %d subdevices (%d available)",
-				dev, snd_pcm_info_get_id(pcminfo), snd_pcm_info_get_name(pcminfo),
+			Debugprintf("  Device hw:%d,%d ID `%s', name `%s', %d subdevices (%d available)",
+				card, dev, snd_pcm_info_get_id(pcminfo), snd_pcm_info_get_name(pcminfo),
 				nsubd, snd_pcm_info_get_subdevices_avail(pcminfo));
 
 			sprintf(hwdev, "hw:%d,%d", card, dev);
@@ -762,23 +769,21 @@ int GetInputDeviceCollection()
  
 			snd_pcm_hw_params_get_channels_min(pars, &min);
 			snd_pcm_hw_params_get_channels_max(pars, &max);
-	
+			snd_pcm_hw_params_get_rate_min(pars, &ratemin, NULL);
+			snd_pcm_hw_params_get_rate_max(pars, &ratemax, NULL);
+
 			if( min == max )
 				if( min == 1 )
-					Debugprintf("    1 channel, ");
+					Debugprintf("    1 channel,  sampling rate %u..%u Hz", ratemin, ratemax);
 				else
-					Debugprintf("    %d channels, ", min);
+					Debugprintf("    %d channels,  sampling rate %u..%u Hz", min, ratemin, ratemax);
 			else
-				Debugprintf("    %u..%u channels, ", min, max);
-			
-			snd_pcm_hw_params_get_rate_min(pars, &min, NULL);
-			snd_pcm_hw_params_get_rate_max(pars, &max, NULL);
-			Debugprintf("sampling rate %u..%u Hz", min, max);
+				Debugprintf("    %u..%u channels, sampling rate %u..%u Hz", min, max, ratemin, ratemax);
 
 			sprintf(NameString, "hw:%d,%d %s(%s)", card, dev,
 				snd_pcm_info_get_name(pcminfo), snd_ctl_card_info_get_name(info));
 
-			Debugprintf("%s", NameString);
+//			Debugprintf("%s", NameString);
 
 			ReadDevices = realloc(ReadDevices,(ReadDeviceCount + 1) * sizeof(ReadDevices));
 			ReadDevices[ReadDeviceCount++] = strdup(NameString);
@@ -787,19 +792,16 @@ int GetInputDeviceCollection()
 			pcm= NULL;
 
 nextdevice:
-		
 			if (snd_ctl_pcm_next_device(handle, &dev) < 0)
 				break;
 	    }
-
 		snd_ctl_close(handle);
-
 nextcard:
 
+		Debugprintf("");
 		if (snd_card_next(&card) < 0 )
 			break;
 	}
-
 	return ReadDeviceCount;
 }
 
@@ -811,7 +813,7 @@ int GetNextInputDevice(char * dest, int max, int n)
 	strcpy(dest, ReadDevices[n]);
 	return strlen(dest);
 }
-int OpenSoundPlayback(char * PlaybackDevice, int m_sampleRate, char * ErrorMsg)
+int OpenSoundPlayback(char * PlaybackDevice, int m_sampleRate, int channels, char * ErrorMsg)
 {
 	int err = 0;
 
@@ -838,63 +840,70 @@ int OpenSoundPlayback(char * PlaybackDevice, int m_sampleRate, char * ErrorMsg)
 		if (ErrorMsg)
 			sprintf (ErrorMsg, "cannot open playback audio device %s (%s)",  buf1, snd_strerror(err));
 		else
-			fprintf (stderr, "cannot open playback audio device %s (%s)",  buf1, snd_strerror(err));
+			Debugprintf("cannot open playback audio device %s (%s)",  buf1, snd_strerror(err));
 		return false;
 	}
 		   
 	if ((err = snd_pcm_hw_params_malloc (&hw_params)) < 0) {
-		fprintf (stderr, "cannot allocate hardware parameter structure (%s)", snd_strerror(err));
+		Debugprintf("cannot allocate hardware parameter structure (%s)", snd_strerror(err));
 		return false;
 	}
 				 
 	if ((err = snd_pcm_hw_params_any (playhandle, hw_params)) < 0) {
-		fprintf (stderr, "cannot initialize hardware parameter structure (%s)", snd_strerror(err));
+		Debugprintf("cannot initialize hardware parameter structure (%s)", snd_strerror(err));
 		return false;
 	}
 	
 	if ((err = snd_pcm_hw_params_set_access (playhandle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) < 0) {
-			fprintf (stderr, "cannot set playback access type (%s)", snd_strerror (err));
+			Debugprintf("cannot set playback access type (%s)", snd_strerror (err));
 		return false;
 	}
 	if ((err = snd_pcm_hw_params_set_format (playhandle, hw_params, SND_PCM_FORMAT_S16_LE)) < 0) {
-		fprintf (stderr, "cannot setplayback  sample format (%s)", snd_strerror(err));
+		Debugprintf("cannot setplayback  sample format (%s)", snd_strerror(err));
 		return false;
 	}
-	
+
 	if ((err = snd_pcm_hw_params_set_rate (playhandle, hw_params, m_sampleRate, 0)) < 0) {
 		if (ErrorMsg)
 			sprintf (ErrorMsg, "cannot set playback sample rate (%s)", snd_strerror(err));
 		else
-			fprintf (stderr, "cannot set playback sample rate (%s)", snd_strerror(err));
+			Debugprintf("cannot set playback sample rate (%s)", snd_strerror(err));
 		return false;
 	}
 
-	m_playchannels = 1;
-	
-	if ((err = snd_pcm_hw_params_set_channels (playhandle, hw_params, 1)) < 0)
+	// Initial call has channels set to 1. Subequent ones set to what worked last time
+
+	if ((err = snd_pcm_hw_params_set_channels (playhandle, hw_params, channels)) < 0)
 	{
-		fprintf (stderr, "cannot set play channel count to 1 (%s)", snd_strerror(err));
-		m_playchannels = 2;
+		Debugprintf("cannot set play channel count to %d (%s)", channels, snd_strerror(err));
+		
+		if (channels == 2)
+			return false;				// Shouldn't happen as should have worked before
+		
+		channels = 2;
 
 		if ((err = snd_pcm_hw_params_set_channels (playhandle, hw_params, 2)) < 0)
 		{
-			fprintf (stderr, "cannot play set channel count to 2 (%s)", snd_strerror(err));
-				return false;
+			Debugprintf("cannot play set channel count to 2 (%s)", snd_strerror(err));
+			return false;
 		}
-		fprintf (stderr, "Play channel count set to 2 (%s)", snd_strerror(err));
 	}
 	
+	Debugprintf("Play channel count set to %d", channels);
+
 	if ((err = snd_pcm_hw_params (playhandle, hw_params)) < 0) {
-		fprintf (stderr, "cannot set parameters (%s)", snd_strerror(err));
+		Debugprintf("cannot set parameters (%s)", snd_strerror(err));
 		return false;
 	}
 	
 	snd_pcm_hw_params_free(hw_params);
 	
 	if ((err = snd_pcm_prepare (playhandle)) < 0) {
-		fprintf (stderr, "cannot prepare audio interface for use (%s)", snd_strerror(err));
+		Debugprintf("cannot prepare audio interface for use (%s)", snd_strerror(err));
 		return false;
 	}
+
+	Savedplaychannels = m_playchannels = channels;
 
 	MaxAvail = snd_pcm_avail_update(playhandle);
 	Debugprintf("Playback Buffer Size %d", (int)MaxAvail);
@@ -1014,8 +1023,18 @@ int OpenSoundCard(char * CaptureDevice, char * PlaybackDevice, int c_sampleRate,
 {
 	Debugprintf("Opening Playback Device %s Rate %d", PlaybackDevice, p_sampleRate);
 
-	if (OpenSoundPlayback(PlaybackDevice, p_sampleRate, ErrorMsg))
+	if (OpenSoundPlayback(PlaybackDevice, p_sampleRate, 1, ErrorMsg))
 	{
+#ifdef SHARECAPTURE
+
+		// Close playback device so it can be shared
+		
+		if (playhandle)
+		{
+			snd_pcm_close(playhandle);
+			playhandle = NULL;
+		}
+#endif
 		Debugprintf("Opening Capture Device %s Rate %d", CaptureDevice, c_sampleRate);
 		return OpenSoundCapture(CaptureDevice, c_sampleRate, ErrorMsg);
 	}
@@ -1083,6 +1102,7 @@ int SoundCardWrite(short * input, unsigned int nSamples)
 	{
 		txSleep(100);
 		avail = snd_pcm_avail_update(playhandle);
+//		Debugprintf("After Sleep Tosend %d Avail %d", nSamples, (int)avail);
 	}
 
 	ret = PackSamplesAndSend(input, nSamples);
@@ -1189,7 +1209,7 @@ int SoundCardRead(short * input, unsigned int nSamples)
 
 	if (avail < 0)
 	{
-		Debugprintf("Read Recovering from %d ..", avail);
+		Debugprintf("avail Recovering from %d ..", avail);
 		if (rechandle)
 		{
 			snd_pcm_close(rechandle);
@@ -1199,7 +1219,7 @@ int SoundCardRead(short * input, unsigned int nSamples)
 		OpenSoundCapture(SavedCaptureDevice, SavedCaptureRate, NULL);
 //		snd_pcm_recover(rechandle, avail, 0);
 		avail = snd_pcm_avail_update(rechandle);
-		Debugprintf("Read After recovery %d ..", avail);
+		Debugprintf("After avail recovery %d ..", avail);
 	}
 
 	if (avail < nSamples)
@@ -1212,7 +1232,18 @@ int SoundCardRead(short * input, unsigned int nSamples)
 	if (ret < 0)
 	{
 		Debugprintf("RX Error %d", ret);
-		snd_pcm_recover(rechandle, avail, 0);
+//		snd_pcm_recover(rechandle, avail, 0);
+		if (rechandle)
+		{
+			snd_pcm_close(rechandle);
+			rechandle = NULL;
+		}
+
+		OpenSoundCapture(SavedCaptureDevice, SavedCaptureRate, NULL);
+//		snd_pcm_recover(rechandle, avail, 0);
+		avail = snd_pcm_avail_update(rechandle);
+		Debugprintf("After Read recovery Avail %d ..", avail);
+
 		return 0;
 	}
 
@@ -1271,14 +1302,15 @@ short loopbuff[1200];		// Temp for testing - loop sent samples to decoder
 
 void InitSound(BOOL Quiet)
 {
-
 	GetInputDeviceCollection();
 	GetOutputDeviceCollection();
-
+	
 	OpenSoundCard(CaptureDevice, PlaybackDevice, 12000, 12000, NULL);
 }
 
-int min = 0, max = 0, leveltimer = 0;
+int min = 0, max = 0, lastlevelreport = 0, lastlevelGUI = 0;
+UCHAR CurrentLevel = 0;		// Peak from current samples
+
 
 void PollReceivedSamples()
 {
@@ -1300,30 +1332,46 @@ void PollReceivedSamples()
 				max = *ptr;
 			ptr++;
 		}
-		leveltimer++;
 
 		displayLevel(max);
+		CurrentLevel = ((max - min) * 75) /32768;	// Scale to 150 max
 
-		if (leveltimer > 400)
+		if ((Now - lastlevelGUI) > 2000)	// 2 Secs
 		{
-			char HostCmd[64];
-			leveltimer = 0;
-			Debugprintf("Input peaks = %d, %d", min, max);
-			sprintf(HostCmd, "INPUTPEAKS %d %d", min, max);
-			QueueCommandToHost(HostCmd);
-			min = max = 0;
+			if (WaterfallActive == 0 && SpectrumActive == 0)				// Don't need to send as included in Waterfall Line
+				SendtoGUI('L', &CurrentLevel, 1);	// Signal Level
+			
+			lastlevelGUI = Now;
+
+			if ((Now - lastlevelreport) > 10000)	// 10 Secs
+			{
+				char HostCmd[64];
+				lastlevelreport = Now;
+
+				sprintf(HostCmd, "INPUTPEAKS %d %d", min, max);
+				SendCommandToHostQuiet(HostCmd);
+
+				WriteDebugLog(LOGDEBUG, "Input peaks = %d, %d", min, max);
+			}
+			min = max = 0;							// Every 2 secs
 		}
 
 		if (Capturing && Loopback == FALSE)
 			ProcessNewSamples(&inbuffer[0][0], ReceiveSize);
 	}
-}
-
+} 
 
 void StopCapture()
 {
 	Capturing = FALSE;
-//	Debugprintf("Stop Capture");
+
+#ifdef SHARECAPTURE
+
+	// Stopcapture is only called when we are about to transmit, so use it to open plaback device. We don't keep
+	// it open all the time to facilitate sharing.
+
+	OpenSoundPlayback(SavedPlaybackDevice, SavedPlaybackRate, Savedplaychannels, NULL);
+#endif
 }
 
 void StartCodec(char * strFault)
@@ -1467,6 +1515,13 @@ void SoundFlush()
 	// I think we should turn round the link here. I dont see the point in
 	// waiting for MainPoll
 
+#ifdef SHARECAPTURE
+	if (playhandle)
+	{
+		snd_pcm_close(playhandle);
+		playhandle = NULL;
+	}
+#endif
 	SoundIsPlaying = FALSE;
 
 	if (blnEnbARQRpt > 0 || blnDISCRepeating)	// Start Repeat Timer if frame should be repeated
@@ -1482,7 +1537,7 @@ VOID RadioPTT(int PTTState)
 {
 #ifdef __ARM_ARCH
 	if (useGPIO)
-		gpioWrite(pttGPIOPin, PTTState);
+		gpioWrite(pttGPIOPin, (pttGPIOInvert ? (1-PTTState) : (PTTState)));
 	else
 #endif
 	{
@@ -1529,6 +1584,7 @@ BOOL KeyPTT(BOOL blnPTT)
 	WriteDebugLog(LOGDEBUG, "[Main.KeyPTT]  PTT-%s", BoolString[blnPTT]);
 
 	blnLastPTT = blnPTT;
+	SetLED(0, blnPTT);
 	return TRUE;
 }
 
@@ -1788,7 +1844,78 @@ int stricmp(const unsigned char * pStr1, const unsigned char *pStr2)
     return v;
 }
 
+char Leds[8]= {0};
+unsigned int PKTLEDTimer = 0;
+
 void SetLED(int LED, int State)
 {
+	// If GUI active send state
+
+	Leds[LED] = State;
+	SendtoGUI('D', Leds, 8);
 }
+
+void DrawTXMode(const char * Mode)
+{
+	unsigned char Msg[64];
+	strcpy(Msg, Mode);
+	SendtoGUI('T', Msg, strlen(Msg) + 1);		// TX Frame
+
+}
+
+void DrawTXFrame(const char * Frame)
+{
+	unsigned char Msg[64];
+	strcpy(Msg, Frame);
+	SendtoGUI('T', Msg, strlen(Msg) + 1);		// TX Frame
+}
+
+void DrawRXFrame(int State, const char * Frame)
+{
+	unsigned char Msg[64];
+
+	Msg[0] = State;				// Pending/Good/Bad
+	strcpy(&Msg[1], Frame);
+	SendtoGUI('R', Msg, strlen(Frame) + 1);	// RX Frame
+}
+UCHAR Pixels[4096];
+UCHAR * pixelPointer = Pixels;
+
+
+void mySetPixel(unsigned char x, unsigned char y, unsigned int Colour)
+{
+	// Used on Windows for constellation. Save points and send to GUI at end
+	
+	*(pixelPointer++) = x;
+	*(pixelPointer++) = y;
+	*(pixelPointer++) = Colour;
+}
+void clearDisplay()
+{
+	// Reset pixel pointer
+
+	pixelPointer = Pixels;
+
+}
+void updateDisplay()
+{
+//	 SendtoGUI('C', Pixels, pixelPointer - Pixels);	
+}
+void DrawAxes(int Qual, const char * Frametype, char * Mode)
+{
+	UCHAR Msg[80];
+
+	// Teensy used Frame Type, GUI Mode
+	
+	SendtoGUI('C', Pixels, pixelPointer - Pixels);	
+	pixelPointer = Pixels;
+
+	sprintf(Msg, "%s Quality: %d", Mode, Qual);
+	SendtoGUI('Q', Msg, strlen(Msg) + 1);	
+}
+void DrawDecode(char * Decode)
+{}
+
+
+
 

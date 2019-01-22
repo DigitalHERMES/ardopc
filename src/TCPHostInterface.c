@@ -65,9 +65,20 @@ extern int pktport;
 
 extern BOOL UseKISS;			// Enable Packet (KISS) interface
 
+extern BOOL NeedID;				// SENDID Command Flag
+extern BOOL NeedCWID;			// SENDCWID Command Flag
+extern BOOL NeedTwoToneTest;
 
 SOCKET TCPControlSock = 0, TCPDataSock = 0, PktSock = 0;
 SOCKET ListenSock = 0, DataListenSock = 0, PktListenSock = 0;
+SOCKET GUISock = 0;				// UDP socket for GUI interface
+
+int GUIActive = 0;
+int LastGUITime = 0;
+extern int WaterfallActive;		// Waterfall display turned on
+extern int SpectrumActive;		// Spectrum display turned on
+
+struct sockaddr_in GUIHost;
 
 BOOL CONNECTED = FALSE;
 BOOL DATACONNECTED = FALSE;
@@ -97,6 +108,18 @@ int NUMBEROFBUFFERS = 0;
 
 unsigned int Host_Q;			// Frames for Host
 */
+
+// Convert IP Address to Text
+
+VOID Format_Addr(struct sockaddr_in * sin, char * dst)
+{
+	unsigned char work[4];
+	memcpy(work, &sin->sin_addr.s_addr, 4);
+	sprintf(dst,"%d.%d.%d.%d", work[0], work[1], work[2], work[3]);
+	return;
+}
+
+
 
 UCHAR bytLastCMD_DataSent[256];
 
@@ -142,7 +165,6 @@ void TCPSendCommandToHostQuiet(char * strText)		// Higher Debug Level for PTT
 		ret = send(TCPControlSock, bytToSend, len, 0);
 		ret = WSAGetLastError();
 
-		if (CommandTrace) WriteDebugLog(LOGDEBUG, " Command Trace TO Host %s", strText);
 		return;
 	}
 	return;
@@ -172,7 +194,7 @@ void TCPAddTagToDataAndSendToHost(UCHAR * bytData, char * strTag, int Len)
 	// I think largest apcet is about 1360 bytes
 
 	UCHAR * bytToSend;
-	UCHAR buff[1500];
+	UCHAR buff[15000];
 
 	int ret;
 
@@ -355,6 +377,7 @@ void ProcessReceivedData()
 		
 		closesocket(TCPDataSock);
 		TCPDataSock = 0;
+		DataInputLen = 0;
 
 		DATACONNECTED = FALSE;
 		LostHost();
@@ -444,6 +467,43 @@ SOCKET OpenSocket4(int port)
 	return sock;
 }
 
+
+SOCKET OpenUDPSocket(int port)
+{
+	struct sockaddr_in  local_sin;  /* Local socket - internet style */
+	struct sockaddr_in * psin;
+	SOCKET sock = 0;
+	u_long param=1;
+
+	psin=&local_sin;
+	psin->sin_family = AF_INET;
+	psin->sin_addr.s_addr = INADDR_ANY;
+
+	if (port)
+	{
+		sock = socket(AF_INET, SOCK_DGRAM, 0);
+
+	    if (sock == INVALID_SOCKET)
+		{
+	        WriteDebugLog(LOGDEBUG, "socket() failed error %d", WSAGetLastError());
+			return 0;
+		}
+
+		setsockopt (sock, SOL_SOCKET, SO_REUSEADDR, (char *)&param,4);
+
+		psin->sin_port = htons(port);        // Convert to network ordering 
+
+		if (bind( sock, (struct sockaddr *) &local_sin, sizeof(local_sin)) == SOCKET_ERROR)
+		{
+			WriteDebugLog(LOGINFO, "bind(sock) failed port %d Error %d", port, WSAGetLastError());
+		    closesocket(sock);
+			return FALSE;
+		}	
+		ioctl(sock, FIONBIO, &param);
+	}
+	return sock;
+}
+
 VOID InitQueue();
 
 BOOL TCPHostInit()
@@ -463,6 +523,8 @@ BOOL TCPHostInit()
 	DataListenSock = OpenSocket4(port + 1);
 	if (UseKISS && pktport)
 		PktListenSock = OpenSocket4(pktport);
+
+	GUISock = OpenUDPSocket(port);
 
 	return ListenSock;
 }
@@ -551,6 +613,7 @@ void TCPHostPoll()
 					
 				ioctl(TCPControlSock, FIONBIO, &param);
 				CONNECTED = TRUE;
+				InputLen = 0;
 //				SendCommandToHost("RDY");
 			}
 		}
@@ -591,6 +654,7 @@ void TCPHostPoll()
 					
 				ioctl(TCPDataSock, FIONBIO, &param);
 				DATACONNECTED = TRUE;
+				DataInputLen = 0;
 			}
 		}
 	}
@@ -783,6 +847,71 @@ PktLost:
 		CheckForPktMon();
 		CheckForPktData(0);
 	}
+
+	if (GUISock)
+	{
+		// Look fo datagram from GUI Client
+
+		int Len, addrLen = addrlen = sizeof(struct sockaddr_in);
+		char GUIMsg[256];
+
+		Len = recvfrom(GUISock, GUIMsg, 256, 0, (struct sockaddr *)&GUIHost, &addrLen);
+
+		if (Len > 0)
+		{
+			GUIMsg[Len] = 0;
+			LastGUITime = Now;
+
+			if (GUIActive == FALSE)
+			{
+				char Addr[32];
+				Format_Addr(&GUIHost, Addr);
+				WriteDebugLog(DEBUG, "GUI Connected from Address %s", Addr);
+				GUIActive = TRUE;
+			}
+
+			if (strcmp(GUIMsg, "Waterfall") == 0)
+			{
+				WaterfallActive = 1;
+				SpectrumActive = 0;
+			}
+			else if (strcmp(GUIMsg, "Spectrum") == 0)
+			{
+				WaterfallActive = 0;
+				SpectrumActive = 1;
+			}
+			else if (strcmp(GUIMsg, "Disable") == 0)
+			{
+				WaterfallActive = 0;
+				SpectrumActive = 0;
+			}
+			else if (strcmp(GUIMsg, "SENDID") == 0)
+			{
+				if (ProtocolState == DISC)
+					NeedID = TRUE;			// Send from background
+			}
+			else if (strcmp(GUIMsg, "TWOTONETEST") == 0)
+			{
+				if (ProtocolState == DISC)
+					NeedTwoToneTest = TRUE;			// Send from background
+			}
+			else if (strcmp(GUIMsg, "SENDCWID") == 0)
+			{
+				if (ProtocolState == DISC)
+					NeedCWID = TRUE;			// Send from background
+			}
+		}
+		else
+		{
+			if ((Now - LastGUITime) > 15000)
+			{
+				if (GUIActive)
+					WriteDebugLog(DEBUG, "GUI Connection lost");
+
+				GUIActive = FALSE;
+			}
+		}
+	}
 }
 
 /*
@@ -941,3 +1070,17 @@ VOID * _GetBuff(char * File, int Line)
 }
 
 */
+
+
+int SendtoGUI(char Type, unsigned char * Msg, int Len)	
+{
+	unsigned char GUIMsg[5000];
+
+	if (GUIActive == FALSE)
+		return 0;
+
+	GUIMsg[0] = Type;
+	memcpy(GUIMsg + 1, Msg, Len);
+ 
+	return sendto(GUISock, GUIMsg, Len + 1, 0, (struct sockaddr *)&GUIHost, sizeof(GUIHost));
+}

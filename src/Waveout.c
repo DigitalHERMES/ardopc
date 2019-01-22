@@ -9,7 +9,6 @@
 
 //	This is the Windows Version
 
-#define WIN32_LEAN_AND_MEAN		// Exclude rarely-used stuff from Windows headers
 #define _CRT_SECURE_NO_DEPRECATE
 #define _USE_32BIT_TIME_T
 
@@ -33,13 +32,11 @@ VOID COMSetRTS(HANDLE fd);
 VOID COMClearRTS(HANDLE fd);
 VOID processargs(int argc, char * argv[]);
 
-
 #include <math.h>
 
 #include "ARDOPC.h"
 
 void GetSoundDevices();
-
 
 #ifdef LOGTOHOST
 
@@ -320,6 +317,12 @@ void txSleep(int mS)
 		TCPHostPoll();
 
 	Sleep(mS);
+
+	if (PKTLEDTimer && Now > PKTLEDTimer)
+    {
+      PKTLEDTimer = 0;
+      SetLED(PKTLED, 0);				// turn off packet rxed led
+    }
 }
 
 int PriorSize = 0;
@@ -477,12 +480,17 @@ void InitSound(BOOL Report)
 	ret = waveInStart(hWaveIn);
 }
 
-int min = 0, max = 0, leveltimer = 0;
+int min = 0, max = 0, lastlevelGUI = 0, lastlevelreport = 0;
+UCHAR CurrentLevel = 0;		// Peak from current samples
+
 
 void PollReceivedSamples()
 {
 	// Process any captured samples
 	// Ideally call at least every 100 mS, more than 200 will loose data
+
+	// For level display we want a fairly rapir level average but only want to report 
+	// to log every 10 secs or so
 
 	if (inheader[inIndex].dwFlags & WHDR_DONE)
 	{
@@ -497,16 +505,26 @@ void PollReceivedSamples()
 				max = *ptr;
 			ptr++;
 		}
-		leveltimer++;
 
-		if (leveltimer > 1000)
+		CurrentLevel = ((max - min) * 75) /32768;	// Scale to 150 max
+
+		if ((Now - lastlevelGUI) > 2000)	// 2 Secs
 		{
-			char HostCmd[64];
-			leveltimer = 0;
-			sprintf(HostCmd, "INPUTPEAKS %d %d", min, max);
-			QueueCommandToHost(HostCmd);
+			if (WaterfallActive == 0 && SpectrumActive == 0)				// Don't need to send as included in Waterfall Line
+				SendtoGUI('L', &CurrentLevel, 1);	// Signal Level
+			
+			lastlevelGUI = Now;
 
-			WriteDebugLog(LOGDEBUG, "Input peaks = %d, %d", min, max);
+			if ((Now - lastlevelreport) > 10000)	// 10 Secs
+			{
+				char HostCmd[64];
+				lastlevelreport = Now;
+
+				sprintf(HostCmd, "INPUTPEAKS %d %d", min, max);
+				WriteDebugLog(LOGDEBUG, "Input peaks = %d, %d", min, max);
+				SendCommandToHostQuiet(HostCmd);
+
+			}
 			min = max = 0;
 		}
 
@@ -826,6 +844,8 @@ BOOL KeyPTT(BOOL blnPTT)
 	WriteDebugLog(LOGDEBUG, "[Main.KeyPTT]  PTT-%s", BoolString[blnPTT]);
 
 	blnLastPTT = blnPTT;
+	SetLED(0, blnPTT);
+
 	return TRUE;
 }
 
@@ -834,20 +854,64 @@ void PlatformSleep()
 	//	Sleep to avoid using all cpu
 
 	Sleep(10);
+		
+	if (PKTLEDTimer && Now > PKTLEDTimer)
+    {
+      PKTLEDTimer = 0;
+      SetLED(PKTLED, 0);				// turn off packet rxed led
+    }
 }
 
 void displayState(const char * State)
 {
+	char Msg[80];
+
+	strcpy(Msg, State); 
+	SendtoGUI('S', Msg, strlen(Msg) + 1);		// Protocol State
 	// Dummy for i2c display
 }
 
+void DrawTXMode(const char * Mode)
+{
+	char Msg[80];
+
+	strcpy(Msg, Mode); 
+	SendtoGUI('T', Msg, strlen(Msg) + 1);		// TX Frame
+}
+
+void DrawTXFrame(const char * Frame)
+{
+	char Msg[80];
+
+	strcpy(Msg, Frame); 
+	SendtoGUI('T', Msg, strlen(Msg) + 1);		// TX Frame
+}
+
+void DrawRXFrame(int State, const char * Frame)
+{
+	unsigned char Msg[64];
+
+	Msg[0] = State;				// Pending/Good/Bad
+	strcpy(&Msg[1], Frame);
+	SendtoGUI('R', Msg, strlen(Frame) + 2);	// RX Frame
+}
+
+char Leds[8]= {0};
+unsigned int PKTLEDTimer = 0;
+
 void SetLED(int LED, int State)
 {
+	// If GUI active send state
+
+	Leds[LED] = State;
+	SendtoGUI('D', Leds, 8);
 }
 
 void displayCall(int dirn, char * call)
 {
-	// Dummy for i2c display
+	char Msg[32];
+	sprintf(Msg, "%c%s", dirn, call);
+	SendtoGUI('I', Msg, strlen(Msg));
 }
 
 HANDLE OpenCOMPort(VOID * pPort, int speed, BOOL SetDTR, BOOL SetRTS, BOOL Quiet, int Stopbits)
@@ -1074,14 +1138,41 @@ int RadioPoll()
 	return CatRXLen;
 }
 
-void mySetPixel(unsigned short x, unsigned short y, unsigned short Colour)
-{}
+UCHAR Pixels[4096];
+UCHAR * pixelPointer = Pixels;
+
+
+void mySetPixel(unsigned char x, unsigned char y, unsigned int Colour)
+{
+	// Used on Windows for constellation. Save points and send to GUI at end
+	
+	*(pixelPointer++) = x;
+	*(pixelPointer++) = y;
+	*(pixelPointer++) = Colour;
+}
 void clearDisplay()
-{}
+{
+	// Reset pixel pointer
+
+	pixelPointer = Pixels;
+
+}
 void updateDisplay()
-{}
-void DrawAxes(int Qual, char * Mode)
-{}
+{
+//	 SendtoGUI('C', Pixels, pixelPointer - Pixels);	
+}
+void DrawAxes(int Qual, const char * Frametype, char * Mode)
+{
+	UCHAR Msg[80];
+
+	// Teensy used Frame Type, GUI Mode
+	
+	SendtoGUI('C', Pixels, pixelPointer - Pixels);	
+	pixelPointer = Pixels;
+
+	sprintf(Msg, "%s Quality: %d", Mode, Qual);
+	SendtoGUI('Q', Msg, strlen(Msg) + 1);	
+}
 void DrawDecode(char * Decode)
 {}
 

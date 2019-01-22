@@ -265,7 +265,7 @@ sendit:
 			if (bytFrameType >= 0x7A && bytFrameType <= 0x7D)
 				Mod4FSK600BdDataAndPlay(bytEncodedBytes[0], bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
 			else
-				Mod4FSKDataAndPlay(bytEncodedBytes[0], bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
+				Mod4FSKDataAndPlay(bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
 		}
 		else if (strcmp(strMod, "16FSK") == 0)
 		{
@@ -305,7 +305,7 @@ sendit:
 			unsigned char bytEncodedBytes[16];
 
 			EncLen = Encode4FSKIDFrame(Callsign, GridSquare, bytEncodedBytes);
-			Mod4FSKDataAndPlay(0x30, &bytEncodedBytes[0], 16, 0);		// only returns when all sent
+			Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
 
 			dttLastFECIDSent = Now;
 			return TRUE;

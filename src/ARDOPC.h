@@ -4,7 +4,13 @@
 #define ARDOPCHEADERDEFINED
 
 #define ProductName "ARDOP TNC"
-#define ProductVersion "1.0.4.1b-BPQ"
+#define ProductVersion "1.0.4.1j-OFDMBPQ"
+
+#ifdef CONST
+#undef CONST
+#endif
+#define CONST const	// for building sample arrays
+
 
 //#define USE_SOUNDMODEM
 
@@ -13,6 +19,10 @@
 #define SendSize 1200		// 100 mS for now
 #define ReceiveSize 240		// try 50mS 100 mS for now
 #define NumberofinBuffers 4
+
+#define MAXCAR 43			// Max OFDM Carriers
+
+#define DATABUFFERSIZE 11000
 
 #ifndef _WIN32_WINNT		// Allow use of features specific to Windows XP or later.                   
 #define _WIN32_WINNT 0x0501	// Change this to the appropriate value to target other versions of Windows.
@@ -77,6 +87,43 @@ unsigned int getTicks();
 #endif
 #endif
 
+#define UseGUI			// Enable GUI Front End Support
+
+#ifndef TEENSY
+#ifdef UseGUI
+
+// Constellation and Waterfall for GUI interface
+
+#define PLOTCONSTELLATION
+#define PLOTWATERFALL
+#define PLOTSPECTRUM
+#define ConstellationHeight 90
+#define ConstellationWidth 90
+#define WaterfallWidth 205
+#define WaterfallHeight 64
+#define SpectrumWidth 205
+#define SpectrumHeight 64
+
+#define PLOTRADIUS 42
+#define WHITE 0
+#define Tomato 1
+#define Gold 2
+#define Lime 3	
+#define Yellow 4
+#define Orange 5
+#define Khaki 6
+#define Cyan 7
+#define DeepSkyBlue 8
+#define RoyalBlue 9
+#define Navy 10
+#define Black 11 
+#define Goldenrod 12
+#define Fuchsia 13
+
+#endif
+#endif
+
+
 #include "ecc.h"				// RS Constants
 
 typedef int BOOL;
@@ -101,9 +148,10 @@ typedef unsigned char UCHAR;
 #define IRSLED LED1
 #define TRAFFICLED LED2
 #else
-#define ISSLED 0
-#define IRSLED 0
-#define TRAFFICLED 0
+#define ISSLED 1
+#define IRSLED 2
+#define TRAFFICLED 3
+#define PKTLED 4
 #endif
 
 BOOL KeyPTT(BOOL State);
@@ -118,7 +166,7 @@ int EncodePSKData(UCHAR bytFrameType, UCHAR * bytDataToSend, int Length, unsigne
 int Encode4FSKIDFrame(char * Callsign, char * Square, unsigned char * bytreturn);
 int EncodeDATAACK(int intQuality, UCHAR bytSessionID, UCHAR * bytreturn);
 int EncodeDATANAK(int intQuality , UCHAR bytSessionID, UCHAR * bytreturn);
-void Mod4FSKDataAndPlay(int Type, unsigned char * bytEncodedBytes, int Len, int intLeaderLen);
+void Mod4FSKDataAndPlay(unsigned char * bytEncodedBytes, int Len, int intLeaderLen);
 void Mod4FSK600BdDataAndPlay(int Type, unsigned char * bytEncodedBytes, int Len, int intLeaderLen);
 void Mod16FSKDataAndPlay(int Type, unsigned char * bytEncodedBytes, int Len, int intLeaderLen);
 void Mod8FSKDataAndPlay(int Type, unsigned char * bytEncodedBytes, int Len, int intLeaderLen);
@@ -141,7 +189,7 @@ void SendCommandToHostQuiet(char * Cmd);
 void TCPSendCommandToHostQuiet(char * Cmd);
 void SCSSendCommandToHostQuiet(char * Cmd);
 void UpdateBusyDetector(short * bytNewSamples);
-int UpdatePhaseConstellation(short * intPhases, short * intMags, char * strMod, BOOL blnQAM);
+int UpdatePhaseConstellation(short * intPhases, short * intMags, int pskPhase, BOOL blnQAM, BOOL OFDM);
 void SetARDOPProtocolState(int value);
 BOOL BusyDetect3(float * dblMag, int intStart, int intStop);
 void SendLogToHost(char * Msg, int len);
@@ -236,7 +284,15 @@ VOID ProcessDEDModeFrame(UCHAR * rxbuffer, unsigned int Length);
 BOOL CheckForPktMon();
 BOOL CheckForPktData();
 
+int SendtoGUI(char Type, unsigned char * Msg, int Len);	
+void DrawTXFrame(const char * Frame);
+void DrawRXFrame(int State, const char * Frame);
+void mySetPixel(unsigned char x, unsigned char y, unsigned int Colour);
+void clearDisplay();
 
+extern int WaterfallActive;
+extern int SpectrumActive;
+extern unsigned int PKTLEDTimer;
 
 extern char stcLastPingstrSender[10];
 extern char stcLastPingstrTarget[10];
@@ -337,6 +393,7 @@ extern struct SEM Semaphore;
 #define END 0x2C
 #define ConRejBusy 0x2D
 #define ConRejBW 0x2E
+#define OConReq500 0x2F
 
 #define ConAck200 0x39
 #define ConAck500 0x3A
@@ -344,9 +401,22 @@ extern struct SEM Semaphore;
 #define ConAck2000 0x3C
 #define PINGACK 0x3D
 #define PING 0x3E
+#define OConReq2500 0x3F
 #define PktFrameHeader 0xC0		// Variable length frame Header
 #define PktFrameData 0xC1		// Variable length frame Data (Virtual Frsme Type)
 
+// OFDM modes
+
+#define DOFDM_500_55_E	0xC2
+#define DOFDM_500_55_O	0xC3
+
+#define DOFDM_2500_55_E	0xC4
+#define DOFDM_2500_55_O	0xC5
+
+#define OFDMACK	0xC6
+
+#define DataACK	256 //	Dummies
+#define DataNAK	257 //	Dummies
 
 extern const short intTwoToneLeaderTemplate[120];  // holds just 1 symbol (0 ms) of the leader
 extern const short int50BaudTwoToneLeaderTemplate[240];  // holds just 1 symbol (20 ms) of the leader
@@ -358,6 +428,8 @@ extern const short intFSK25bdCarTemplate[16][480];		// Template for 16FSK carrie
 extern const short intFSK50bdCarTemplate[4][240];		// Template for 4FSK carriers spaced at 50 Hz, 50 baud
 extern const short intFSK100bdCarTemplate[20][120];		// Template for 4FSK carriers spaced at 100 Hz, 100 baud
 extern const short intFSK600bdCarTemplate[4][20];		// Template for 4FSK carriers spaced at 600 Hz, 600 baud  (used for FM only)
+
+extern const short intOFDMTemplate[MAXCAR][8][216];
 
 // Config Params
 extern char GridSquare[9];
@@ -384,7 +456,11 @@ extern BOOL RadioControl;
 extern BOOL SlowCPU;
 extern BOOL AccumulateStats;
 extern BOOL Use600Modes;
+extern BOOL UseOFDM;
+extern BOOL EnableOFDM;
 extern BOOL FSKOnly;
+extern int NegotiateBW;
+extern BOOL UseOFDM;
 extern BOOL fastStart;
 extern BOOL ConsoleLogLevel;
 extern BOOL FileLogLevel;
@@ -400,6 +476,7 @@ extern BOOL gotGPIO;
 extern BOOL useGPIO;
 
 extern int pttGPIOPin;
+extern BOOL pttGPIOInvert;
 
 extern HANDLE hCATDevice;		// port for Rig Control
 extern char CATPort[80];
@@ -463,7 +540,7 @@ extern int DecodeCompleteTime;
 
 extern BOOL AccumulateStats;
 
-extern unsigned char bytEncodedBytes[1800];
+extern unsigned char bytEncodedBytes[4500];
 extern int EncLen;
 
 extern char AuxCalls[10][10];
@@ -517,6 +594,7 @@ extern int intAccumPSKTracking;
 extern int intQAMTrackAttempts;
 extern int intAccumQAMTracking;
 extern int intPSKSymbolCnt;
+extern int intOFDMSymbolCnt;
 extern int intGoodPSKFrameDataDecodes;
 extern int intFailedPSKFrameDataDecodes;
 extern int intAvgPSKQuality;
@@ -543,13 +621,19 @@ extern int intFSKSymbolsDecoded;
 extern int intPSKQuality[2];
 extern int intPSKQualityCnts[2];
 extern int intPSKSymbolsDecoded; 
+extern int intOFDMQuality[8];
+extern int intOFDMQualityCnts[8];
+extern int intOFDMSymbolsDecoded; 
 
 extern int intQAMQuality;
 extern int intQAMQualityCnts;
 extern int intQAMSymbolsDecoded;
 extern int intQAMSymbolCnt;
+
 extern int intGoodQAMFrameDataDecodes;
 extern int intFailedQAMFrameDataDecodes;
+extern int intGoodOFDMFrameDataDecodes;
+extern int intFailedOFDMFrameDataDecodes;
 extern int intGoodQAMSummationDecodes;
 
 extern int dttLastBusyOn;
@@ -581,5 +665,20 @@ extern BOOL SerialMode;			// Set if using SCS Mode, Unset ofr TCP Mode
 // Has to follow enum defs
 
 BOOL EncodeARQConRequest(char * strMyCallsign, char * strTargetCallsign, enum _ARQBandwidth ARQBandwidth, UCHAR * bytReturn);
+
+
+
+// OFDM Modes
+
+#define PSK2	0
+#define PSK4	1
+#define PSK8	2
+#define QAM16	3
+#define PSK16	4			// Experimental - is it better than 16QAM?
+#define QAM32	5
+
+BOOL OFDMMode;				// OFDM can use various modulation modes and redundancy levels
+
+extern const char OFDMModes[8][6];
 
 #endif

@@ -32,6 +32,15 @@ extern int dttLastBusyTrip;
 extern int dttPriorLastBusyTrip;
 extern int dttLastBusyClear;
 
+extern int OFDMCarriersReceived[8];
+extern int OFDMCarriersDecoded[8];
+
+extern int OFDMCarriersAcked[8];
+extern int OFDMCarriersNaked[8];
+
+extern const char Good[MAXCAR];
+extern int intNumCar;
+extern UCHAR goodReceivedBlocks[128];
 
 int intLastFrameIDToHost = 0;
 int	intLastFailedFrameID = 0;
@@ -47,13 +56,13 @@ UCHAR bytLastARQDataFrameAcked = 0;  // initialize to an improper data frame
 void ClearTuningStats();
 void ClearQualityStats();
 void updateDisplay();
-void DrawTXMode(char * TXMode);
+void DrawTXMode(const char * TXMode);
 
 int bytQDataInProcessLen = 0;		// Lenght of frame to send/last sent
 
 BOOL blnLastFrameSentData = FALSE;
 
-extern char CarrierOk[8];
+extern char CarrierOk[MAXCAR];
 extern int LastDataFrameType;	
 extern BOOL blnARQDisconnect;
 extern const short FrameSize[256];
@@ -134,6 +143,15 @@ int GetNextFrameData(int * intUpDn, UCHAR * bytFrameTypeToSend, UCHAR * strMod, 
 BOOL CheckForDisconnect();
 BOOL Send10MinID();
 void ProcessPingFrame(char * bytData);
+int EncodeOFDMData(UCHAR bytFrameType, UCHAR * bytDataToSend, int Length, unsigned char * bytEncodedBytes);void ModOFDMDataAndPlay(unsigned char * bytEncodedBytes, int Len, int intLeaderLen);
+void GetOFDMFrameInfo(int OFDMMode, int * intDataLen, int * intRSLen, int * Mode, int * Symbols);
+void ClearOFDMVariables();
+BOOL IsConReq(UCHAR intFrameType, BOOL AllowOFDM);
+VOID EncodeAndSendOFDMACK(UCHAR bytSessionID, int LeaderLength);
+void RemoveProcessedOFDMData();
+int ProcessOFDMAck(int AckType);
+void ProcessOFDMNak(int AckType);
+
 
 void LogStats();
 int ComputeInterFrameInterval(int intRequestedIntervalMS);
@@ -156,15 +174,24 @@ int intFrameSyncs;
 int intGoodPSKSummationDecodes;
 int intGoodFSKSummationDecodes;
 int intGoodQAMSummationDecodes;
+int intGoodOFDMSummationDecodes;
+int intGoodOFDMFrameDataDecodes;
+int intGoodOFDMFrameDataDecodes = 0;
+int	intFailedOFDMFrameDataDecodes = 0;
+int	intAvgOFDMQuality = 0;
+
 float dblLeaderSNAvg;
 int intAccumPSKLeaderTracking;
 float dblAvgPSKRefErr;
 int intPSKTrackAttempts;
 int intAccumPSKTracking;
 int intQAMTrackAttempts;
+int intOFDMTrackAttempts;
 int intAccumQAMTracking;
+int intAccumOFDMTracking;
 int intPSKSymbolCnt;
 int intQAMSymbolCnt;
+int intOFDMSymbolCnt;
 int intGoodPSKFrameDataDecodes;
 int intFailedPSKFrameDataDecodes;
 int intGoodQAMFrameDataDecodes;
@@ -180,7 +207,7 @@ int intEnvelopeCors;
 float dblAvgCorMaxToMaxProduct;
 int intConReqSN;
 int intConReqQuality;
-
+int intTimeouts;
 
 // Subroutine to compute a 8 bit CRC value and append it to the Data...
 
@@ -269,6 +296,7 @@ void SetARDOPProtocolState(int value)
 		ClearDataToSend();
 		SetLED(ISSLED, FALSE);
 		SetLED(IRSLED, FALSE);
+		displayCall(0x20, "");
 
 		break;
 
@@ -635,6 +663,11 @@ static UCHAR DataModes200FSK[] = {0x48};
 static UCHAR DataModes500[] = {0x48, 0x42, 0x40, 0x50, 0x52, 0x54};
 static UCHAR DataModes500FSK[] = {0x48};
 
+static UCHAR DataModes500OFDM[] = {0x48, 0x42, 0x40, DOFDM_500_55_E};
+
+
+// 2000 Non-FM
+
 
 //4FSK500.100S, 4FSK500.100, 4PSK500.100, 4PSK1000.100, 8PSK.1000.100
 //(701, 865, 1509, 3018, 5133 bytes/min) 
@@ -651,6 +684,8 @@ static UCHAR DataModes1000FSK[] = {0x4C, 0x4A};
 static UCHAR DataModes2000[] = {0x4C, 0x4A, 0x50, 0x60, 0x70, 0x72, 0x74};
 static UCHAR DataModes2000FSK[] = {0x4C, 0x4A};
 
+static UCHAR DataModes2500OFDM[] = {0x4C, 0x4A, 0x50, 0x60,
+									DOFDM_500_55_E, DOFDM_2500_55_E};
 //2000 FM
 //' These include the 600 baud modes for FM only.
 //' The following is temporary, Plan to replace 8PSK 8 carrier modes with high baud 4PSK and 8PSK.
@@ -688,6 +723,12 @@ UCHAR  * GetDataModes(int intBW)
 			bytFrameTypesForBWLength = sizeof(DataModes500FSK);
 			return DataModes500FSK;
 		}
+		
+		if (UseOFDM)
+		{
+			bytFrameTypesForBWLength = sizeof(DataModes500OFDM);
+			return DataModes500OFDM;
+		}
 
 		bytFrameTypesForBWLength = sizeof(DataModes500);
 		return DataModes500;
@@ -712,6 +753,12 @@ UCHAR  * GetDataModes(int intBW)
 				bytFrameTypesForBWLength = sizeof(DataModes2000FSK);
 				return DataModes2000FSK;
 			}
+			if (UseOFDM)
+			{
+				bytFrameTypesForBWLength = sizeof(DataModes2500OFDM);
+				return DataModes2500OFDM;
+			}
+
 			bytFrameTypesForBWLength = sizeof(DataModes2000);
 			return DataModes2000;
 		}
@@ -771,6 +818,23 @@ unsigned short  ModeNAKS[16] = {0};
 
 //  Subroutine to shift up to the next higher throughput or down to the next more robust data modes based on average reported quality 
 
+void Gearshift_9();
+
+void Gearshift_2(int Value, BOOL blnInit)
+{
+	// Called from OFDM code. If positive force up, if negative force down
+
+	if (Value > 0)
+	{
+		intAvgQuality = 200;
+		intACKctr = 10;
+	}
+	else
+	{
+		intNAKctr = 10;
+	}
+	Gearshift_9();
+}
 void Gearshift_9()
 {
 	// More complex mechanism to gear shift based on intAvgQuality, current state and bytes remaining.
@@ -1078,7 +1142,7 @@ void SendData()
 				if (bytCurrentFrameType >= 0x7A && bytCurrentFrameType <= 0x7D)
 					Mod4FSK600BdDataAndPlay(bytEncodedBytes[0], bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
 				else
-					Mod4FSKDataAndPlay(bytEncodedBytes[0], bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
+					Mod4FSKDataAndPlay(bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
 			}
 			else if (strcmp(strMod, "16FSK") == 0)
 			{
@@ -1089,6 +1153,11 @@ void SendData()
 			{
 				EncLen = EncodeFSKData(bytCurrentFrameType, bytDataToSend, Len, bytEncodedBytes);          //      intCurrentFrameSamples = Mod8FSKData(bytFrameType, bytData);
 				Mod8FSKDataAndPlay(bytEncodedBytes[0], bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
+			}
+			else if (strcmp(strMod, "OFDM") == 0)
+			{
+				EncLen = EncodeOFDMData(bytCurrentFrameType, bytDataToSend, bytDataToSendLength, bytEncodedBytes);
+				ModOFDMDataAndPlay(bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
 			}
 			else		// This handles PSK and QAM
 			{
@@ -1114,7 +1183,7 @@ void SendData()
 			ClearDataToSend(); // ' 0.6.4.2 This insures new OUTOUND queue is updated (to value = 0)
 	
 			EncLen = Encode4FSKControl(IDLEFRAME, bytSessionID, bytEncodedBytes);
-			Mod4FSKDataAndPlay(IDLEFRAME, &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+			Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 	
 			WriteDebugLog(LOGDEBUG, "[ARDOPprotocol.SendData]  Send IDLE with Repeat, Set ProtocolState=IDLE ");
   			return;
@@ -1153,10 +1222,10 @@ int GetNextFrameData(int * intUpDn, UCHAR * bytFrameTypeToSend, UCHAR * strMod, 
 			intFrameTypePtr = 0;
 
 		bytCurrentFrameType = bytFrameTypesForBW[intFrameTypePtr];
-#ifdef PLOTCONSTELLATION
+
 		DrawTXMode(shortName(bytCurrentFrameType));
 		updateDisplay();
-#endif
+
 		if(DebugLog) WriteDebugLog(LOGDEBUG, "[ARDOPprotocol.GetNextFrameData] Initial Frame Type: %s", Name(bytCurrentFrameType));
 		*intUpDn = 0;
 		return 0;
@@ -1167,10 +1236,10 @@ int GetNextFrameData(int * intUpDn, UCHAR * bytFrameTypeToSend, UCHAR * strMod, 
 		{
 			intFrameTypePtr = max(0, intFrameTypePtr + *intUpDn);
 			bytCurrentFrameType = bytFrameTypesForBW[intFrameTypePtr];
-#ifdef PLOTCONSTELLATION
+
 			DrawTXMode(shortName(bytCurrentFrameType));
 			updateDisplay();
-#endif
+
 			strShift = "Shift Down";
 		}
 		*intUpDn = 0;
@@ -1181,10 +1250,10 @@ int GetNextFrameData(int * intUpDn, UCHAR * bytFrameTypeToSend, UCHAR * strMod, 
 		{
 			intFrameTypePtr = min(bytFrameTypesForBWLength, intFrameTypePtr + *intUpDn);
 			bytCurrentFrameType = bytFrameTypesForBW[intFrameTypePtr];
-#ifdef PLOTCONSTELLATION
+
 			DrawTXMode(shortName(bytCurrentFrameType));
 			updateDisplay();
-#endif
+
 			strShift = "Shift Up";
 		}
 		*intUpDn = 0;
@@ -1195,7 +1264,7 @@ int GetNextFrameData(int * intUpDn, UCHAR * bytFrameTypeToSend, UCHAR * strMod, 
 	
 	if ((bytCurrentFrameType & 1) == (bytLastARQDataFrameAcked & 1))
 	{
-		*bytFrameTypeToSend = bytCurrentFrameType ^ 1;  // This insures toggle of  Odd and Even 
+		*bytFrameTypeToSend = bytCurrentFrameType ^ 1;  // This ensures toggle of  Odd and Even 
 		bytLastARQDataFrameSent = *bytFrameTypeToSend;
 	}
 	else
@@ -1215,6 +1284,14 @@ int GetNextFrameData(int * intUpDn, UCHAR * bytFrameTypeToSend, UCHAR * strMod, 
 	FrameInfo(bytCurrentFrameType, &blnOdd, &intNumCar, strMod, &intBaud, &intDataLen, &intRSLen, &bytQualThresh, strType);
 
 	MaxLen = intDataLen * intNumCar;
+
+	if (strMod[0] == 'O')	// OFDM
+	{
+		int Dummy;
+
+		GetOFDMFrameInfo(OFDMMode, &intDataLen, &intRSLen, &Dummy, &Dummy);
+		MaxLen = intDataLen * intNumCar;
+	}
 
 	if (MaxLen > bytDataToSendLength)
 		MaxLen = bytDataToSendLength;
@@ -1250,6 +1327,8 @@ void InitializeConnection()
 	memset(ModeHasWorked, 0, sizeof(ModeHasWorked));
 	memset(ModeHasBeenTried, 0, sizeof(ModeHasBeenTried));
 	memset(ModeNAKS, 0, sizeof(ModeNAKS));
+
+	ClearOFDMVariables();
 }
 
 // This sub processes a correctly decoded ConReq frame, decodes it an passed to host for display if it doesn't duplicate the prior passed frame. 
@@ -1261,15 +1340,11 @@ void ProcessUnconnectedConReqFrame(int intFrameType, UCHAR * bytData)
 	char * ToCall = strlop(bytData, ' ');
 	int Len;
 
-	if (!(intFrameType >= 0x31 && intFrameType <= 0x38))
-		return;
-
-	if (ToCall == NULL)		// messed up by COn Req processing
+	if (ToCall == NULL)		// messed up by Con Req processing
 		ToCall = bytData + strlen(bytData) + 1;
  
 	Len = sprintf(strDisplay, " [%s: %s > %s]", Name(intFrameType), bytData, ToCall); 
     AddTagToDataAndSendToHost(strDisplay, "ARQ", Len);
-
 }
 
  
@@ -1311,7 +1386,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 			tmrFinalID = Now + 3000;			
 			blnEnbARQRpt = FALSE;
 
-			Mod4FSKDataAndPlay(0x2C, &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+			Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 			return;
 		}
 
@@ -1321,11 +1396,13 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
             return;
 		}
 
-    
 		// Process Connect request to MyCallsign or Aux Call signs  (Handles protocol rule 1.2)
-   
-		if (!blnFrameDecodedOK || intFrameType < 0x31 || intFrameType > 0x38)
-			return;			// No decode or not a ConReq
+
+		if (!blnFrameDecodedOK)
+				return;				// No decode 
+
+		if (IsConReq(intFrameType, EnableOFDM)== FALSE)
+				return;				// not a ConReq
 
 		strCallsign  = strlop(bytData, ' '); // "fromcall tocall"
 		strcpy(strRemoteCallsign, bytData);
@@ -1364,7 +1441,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 					// a continuous busy condition.
 
  					EncLen = Encode4FSKControl(ConRejBusy, bytPendingSessionID, bytEncodedBytes);
-					Mod4FSKDataAndPlay(ConRejBusy, &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+					Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 
 					sprintf(HostCmd, "REJECTEDBUSY %s", strRemoteCallsign);
 					QueueCommandToHost(HostCmd);
@@ -1383,7 +1460,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				QueueCommandToHost(HostCmd);
 				InitializeConnection();	
 				bytDataToSendLength = 0;
-
+				displayCall('<', bytData);
 				blnPending = TRUE;				
 				blnEnbARQRpt = FALSE;
 
@@ -1408,7 +1485,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				intReceivedLeaderLen = intLeaderRcvdMs;		 // capture the received leader from the remote ISS's ConReq (used for timing optimization)
 
 				EncLen = EncodeConACKwTiming(intReply, intLeaderRcvdMs, bytPendingSessionID, bytEncodedBytes);
-				Mod4FSKDataAndPlay(intReply, &bytEncodedBytes[0], EncLen, intARQDefaultDlyMs);		// only returns when all sent
+				Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, intARQDefaultDlyMs);		// only returns when all sent
 			}
 			else
 			{
@@ -1422,7 +1499,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				QueueCommandToHost(HostCmd);
 			
 				EncLen = Encode4FSKControl(intReply, bytPendingSessionID, bytEncodedBytes);
-				Mod4FSKDataAndPlay(intReply, &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+				Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 			}
 		}
 		else
@@ -1448,7 +1525,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 
 			// ConReq processing (to handle case of ISS missing initial ConAck from IRS)
 
-			if (intFrameType >= 0x31 && intFrameType <= 0x38) // Process Connect request to MyCallsign or Aux Call signs as for DISC state above (ISS must have missed initial ConACK from ProtocolState.DISC state)
+			if (IsConReq(intFrameType, EnableOFDM)) // Process Connect request to MyCallsign or Aux Call signs as for DISC state above (ISS must have missed initial ConACK from ProtocolState.DISC state)
 			{
 				if (!blnListen)
 					return;
@@ -1489,7 +1566,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 						strcpy(strFinalIDCallsign, strCallsign);
 
 						EncLen = EncodeConACKwTiming(intReply, intLeaderRcvdMs, bytPendingSessionID, bytEncodedBytes);
-						Mod4FSKDataAndPlay(intReply, &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+						Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 						// ' No delay to allow ISS to measure its TX>RX delay}
 						return;
 					}
@@ -1506,7 +1583,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 					QueueCommandToHost(HostCmd);
 
 					EncLen = Encode4FSKControl(intReply, bytPendingSessionID, bytEncodedBytes);
-					Mod4FSKDataAndPlay(intReply, &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+					Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 
 					return;
 				}
@@ -1563,7 +1640,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				QueueCommandToHost(HostCmd);
 
 				EncLen = EncodeDATAACK(intLastRcvdFrameQuality, bytSessionID, bytEncodedBytes); // Send ACK
-				Mod4FSKDataAndPlay(bytEncodedBytes[0], &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+				Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 
 				// Initialize the frame type and pointer based on bandwidth (added 0.3.1.3)
 				
@@ -1608,7 +1685,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				dttTimeoutTrip = Now;
 
 				EncLen = EncodeDATAACK(intLastRcvdFrameQuality, bytSessionID, bytEncodedBytes); // Send ACK
-				Mod4FSKDataAndPlay(bytEncodedBytes[0], &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+				Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 				return;
 			}
 
@@ -1634,7 +1711,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				blnEnbARQRpt = FALSE;
 
 				EncLen = Encode4FSKControl(0x2C, bytSessionID, bytEncodedBytes);
-				Mod4FSKDataAndPlay(0x2C, &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+				Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 				return;
 			}
 			
@@ -1659,7 +1736,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				{
 					dttLastFECIDSent = Now;
 					EncLen = Encode4FSKIDFrame(strLocalCallsign, GridSquare, bytEncodedBytes);
-					Mod4FSKDataAndPlay(0x30, &bytEncodedBytes[0], 16, 0);		// only returns when all sent
+					Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
 				}
 				
 
@@ -1677,7 +1754,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				// Send ACK
 
 				EncLen = EncodeDATAACK(100, bytSessionID, bytEncodedBytes); // Send ACK
-				Mod4FSKDataAndPlay(bytEncodedBytes[0], &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+				Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 				dttTimeoutTrip = Now;
 				return;
 			}
@@ -1700,7 +1777,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 						SendCommandToHost("STATUS QUEUE BREAK new Protocol State IRStoISS");
 						blnEnbARQRpt = TRUE;  // setup for repeats until changeover
  						EncLen = Encode4FSKControl(BREAK, bytSessionID, bytEncodedBytes);
-						Mod4FSKDataAndPlay(BREAK, &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+						Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 					}
 					else
 					{
@@ -1708,7 +1785,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 
 						dttTimeoutTrip = Now;
 						EncLen = EncodeDATAACK(100, bytSessionID, bytEncodedBytes); // Send ACK
-						Mod4FSKDataAndPlay(bytEncodedBytes[0], &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+						Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 						dttTimeoutTrip = Now;
 					}
 					return;
@@ -1746,7 +1823,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 					SetARDOPProtocolState(IRStoISS); // (ONLY IRS State where repeats are used)
 					SendCommandToHost("STATUS QUEUE BREAK new Protocol State IRStoISS");
  					EncLen = Encode4FSKControl(BREAK, bytSessionID, bytEncodedBytes);
-					Mod4FSKDataAndPlay(BREAK, &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+					Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 					return;
 				}
 
@@ -1769,9 +1846,23 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				// Always ACK good data frame ...ISS may have missed last ACK
 
 				blnEnbARQRpt = FALSE;
-				EncLen = EncodeDATAACK(intLastRcvdFrameQuality, bytSessionID, bytEncodedBytes); // Send ACK
-				Mod4FSKDataAndPlay(bytEncodedBytes[0], &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+
 				bytLastACKedDataFrameType = intFrameType;
+		
+				if (strFrameType[intFrameType][0] == 'O')
+				{
+					// OFDM Frame. If all carriers received ok send normal ack, else send OFDM Ack 
+
+					if (memcmp(CarrierOk, Good, intNumCar) != 0)
+					{
+						EncodeAndSendOFDMACK(bytSessionID, LeaderLength);
+						return;
+					}
+				}
+
+
+				EncLen = EncodeDATAACK(intLastRcvdFrameQuality, bytSessionID, bytEncodedBytes); // Send ACK
+				Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 				return;
 			}
 
@@ -1781,9 +1872,14 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
  
 			if ((!blnFrameDecodedOK) && intFrameType == bytLastACKedDataFrameType)
 			{
-				EncLen = EncodeDATAACK(intLastRcvdFrameQuality, bytSessionID, bytEncodedBytes); // Send ACK
-				Mod4FSKDataAndPlay(bytEncodedBytes[0], &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
-				blnEnbARQRpt = FALSE;
+				if (strFrameType[intFrameType][0] == 'O')
+					EncodeAndSendOFDMACK(bytSessionID, LeaderLength);
+				else
+				{
+					EncLen = EncodeDATAACK(intLastRcvdFrameQuality, bytSessionID, bytEncodedBytes); // Send ACK
+					Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+					blnEnbARQRpt = FALSE;
+				}
 
 				WriteDebugLog(LOGDEBUG, "[ARDOPprotocol.ProcessRcvdARQFrame] Data Decode Failed but Frame Type matched last ACKed. Send ACK, data already passed to host. ");
 
@@ -1797,9 +1893,31 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 
 					ARQState = IRSData;  //This substate change is the final completion of ISS to IRS changeover and allows the new IRS to now break if desired (Rule 3.5) 
 				}
-				EncLen = EncodeDATANAK(intLastRcvdFrameQuality, bytSessionID, bytEncodedBytes); // Send NAK
 				blnEnbARQRpt = FALSE;
-				Mod4FSKDataAndPlay(bytEncodedBytes[0], &bytEncodedBytes[0], EncLen, LeaderLength);
+		
+				if (strFrameType[intFrameType][0] == 'O')
+				{
+					// OFDM Frame. If any data is buffered, send OFDMACK 
+
+					if (memchr(goodReceivedBlocks, 1, 128))
+					{
+						EncodeAndSendOFDMACK(bytSessionID, LeaderLength);
+						
+						// Must update frame seq as ack will change toggle
+						// But what if ISS misses ack and repeats frame??
+						// So don't swap toggle, and ISS must repeat frame
+						// on OFDMACK with nothing acked
+						
+						//intLastARQDataFrameToHost = intFrameType;
+
+						dttTimeoutTrip = Now;
+						return;
+					}
+				}
+
+
+				EncLen = EncodeDATANAK(intLastRcvdFrameQuality, bytSessionID, bytEncodedBytes); // Send NAK
+				Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);
 
 				return;
 			}
@@ -1819,14 +1937,24 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 			if (!blnFrameDecodedOK)
 				return; // No decode so continue to wait
 
-			if (intFrameType >= 0xE0 && bytDataToSendLength > 0)	 // If ACK and Data to send
+			if (intFrameType >= 0xE0)
 			{
-				WriteDebugLog(LOGDEBUG, "[ARDOPprotocol.ProcessedRcvdARQFrame] Protocol state IDLE, ACK Received with Data to send. Go to ISS Data state.");
+				if (bytDataToSendLength > 0)	 // If ACK and Data to send
+				{
+					WriteDebugLog(LOGDEBUG, "[ARDOPprotocol.ProcessedRcvdARQFrame] Protocol state IDLE, ACK Received with Data to send. Go to ISS Data state.");
 					
-				SetARDOPProtocolState(ISS);
-				ARQState = ISSData;
-				SendData(FALSE);
-				return;
+					SetARDOPProtocolState(ISS);
+					ARQState = ISSData;
+					SendData(FALSE);
+					return;
+				}
+				else
+				{
+					// Data Ack with nothing to send. Let timeout repeat IDLE
+
+					intTimeouts--;			// We didn't really timeout
+					return;
+				}
 			}
 
 			// process BREAK here Send ID if over 10 min. 
@@ -1838,17 +1966,28 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				dttTimeoutTrip = Now;
 				blnEnbARQRpt = FALSE;
 				EncLen = EncodeDATAACK(100, bytSessionID, bytEncodedBytes); // Send ACK
-				Mod4FSKDataAndPlay(bytEncodedBytes[0], &bytEncodedBytes[0], EncLen, LeaderLength);
+				Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);
 
 				WriteDebugLog(LOGDEBUG, "[ARDOPprotocol.ProcessRcvdARQFrame] BREAK Rcvd from IDLE, Go to IRS, Substate IRSfromISS");
                 SendCommandToHost("STATUS BREAK received from Protocol State IDLE, new state IRS");
 				SetARDOPProtocolState(IRS);
 				//Substate IRSfromISS enables processing Rule 3.5 later
-				ARQState = IRSfromISS; 
-				
+				ARQState = IRSfromISS;
+			
 				intLinkTurnovers += 1;
 				intLastARQDataFrameToHost = -1;  // precondition to an illegal frame type (insures the new IRS does not reject a frame)
 				memset(CarrierOk, 0, sizeof(CarrierOk));	// CLear MEM ARQ Stuff
+	
+				// if last frame was OFDM may have data to clear
+
+				if (strFrameType[LastDataFrameType][0] == 'O')
+				{
+					// OFDM Frame, We know the ISS received the last ack, so can remove any data passed to host.
+					// We need to do that, as new frame block numbers will start from first unacked block.
+
+					RemoveProcessedOFDMData();	
+				}
+
 				LastDataFrameType = -1;
 				return;
 			}
@@ -1864,7 +2003,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				tmrFinalID = Now + 3000;
 				blnDISCRepeating = FALSE;
 				EncLen = Encode4FSKControl(END, bytSessionID, bytEncodedBytes);
-				Mod4FSKDataAndPlay(END, &bytEncodedBytes[0], EncLen, LeaderLength);	
+				Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);	
                 bytLastARQSessionID = bytSessionID; // capture this session ID to allow answering DISC from DISC state
                 ClearDataToSend();
                 SetARDOPProtocolState(DISC);
@@ -1884,7 +2023,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				{
 					dttLastFECIDSent = Now;
 					EncLen = Encode4FSKIDFrame(strLocalCallsign, GridSquare, bytEncodedBytes);
-					Mod4FSKDataAndPlay(0x30, &bytEncodedBytes[0], 16, 0);		// only returns when all sent
+					Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
 				}     
 				SetARDOPProtocolState(DISC); 
 				blnEnbARQRpt = FALSE;
@@ -1949,7 +2088,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				dttLastFECIDSent = Now;
 
 				EncLen = EncodeConACKwTiming(intFrameType, intReceivedLeaderLen, bytSessionID, bytEncodedBytes);
-				Mod4FSKDataAndPlay(intFrameType, &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+				Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 
 				return;
 			}
@@ -2024,7 +2163,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 					// Send ACK
 
 					EncLen = EncodeDATAACK(100, bytSessionID, bytEncodedBytes); // Send ACK
-					Mod4FSKDataAndPlay(bytEncodedBytes[0], &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+					Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 
 					dttTimeoutTrip = Now;
 					SetARDOPProtocolState(IRS);
@@ -2093,15 +2232,23 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 #endif
 
 					bytLastARQDataFrameAcked = bytLastARQDataFrameSent;
-					
-					if (bytQDataInProcessLen)
-					{
-						RemoveDataFromQueue(bytQDataInProcessLen);
-						bytQDataInProcessLen = 0;
-					}
 
-					ComputeQualityAvg(38 + 2 * (intFrameType - 0xE0)); // Average ACK quality to exponential averager.
-					Gearshift_9();		// gear shift based on average quality
+					
+					if (strFrameType[bytLastARQDataFrameSent][0] == 'O')		// OFDM
+					{
+						ProcessOFDMAck(1);
+					}
+					else
+					{
+						if (bytQDataInProcessLen)
+						{
+							RemoveDataFromQueue(bytQDataInProcessLen);
+							bytQDataInProcessLen = 0;
+						}
+
+						ComputeQualityAvg(38 + 2 * (intFrameType - 0xE0)); // Average ACK quality to exponential averager.
+						Gearshift_9();		// gear shift based on average quality
+					}
 				}
 				intNAKctr = 0;
 				blnEnbARQRpt = FALSE;	// stops repeat and forces new data frame or IDLE
@@ -2110,7 +2257,44 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 
 				return;
 			}
-			
+		
+			if (intFrameType == OFDMACK)	// if ACK
+			{
+				dttTimeoutTrip = Now;
+				if (blnLastFrameSentData)
+				{
+					int CarriersAcked;
+
+					CarriersAcked = ProcessOFDMAck(OFDMACK);
+
+					if (CarriersAcked == -1)
+					{
+						// Nothing acked, but we are shifting mode so send new data
+						// Don't swap toggle, as IRS didn't
+
+						SendData();		 // Send new data from outbound queue and set up repeats
+					}
+					else if (CarriersAcked)
+					{
+#ifdef TEENSY
+						SetLED(PKTLED, TRUE);		// Flash LED
+						PKTLEDTimer = Now + 200;	// for 200 mS
+#endif
+						bytLastARQDataFrameAcked = bytLastARQDataFrameSent;	
+						SendData();		 // Send new data from outbound queue and set up repeats
+					}
+					else
+					{
+						// Nothing was acked, so just resend last frame
+						// Use timeout mechanism
+
+						dttNextPlay = Now;		// Don't wait
+						intTimeouts--;			// Keep stats clean
+					}
+				}
+				return;
+			}	
+		
 			if (intFrameType == BREAK)
 			{
 				if (!blnARQConnected)
@@ -2148,7 +2332,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				// Send ACK
 
 				EncLen = EncodeDATAACK(100, bytSessionID, bytEncodedBytes); // Send ACK
-				Mod4FSKDataAndPlay(bytEncodedBytes[0], &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+				Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 
 				dttTimeoutTrip = Now;
 				SetARDOPProtocolState(IRS);
@@ -2165,17 +2349,26 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				if (blnLastFrameSentData)
 				{
 			        intNAKctr++;
-				
-					ComputeQualityAvg(38 + 2 * intFrameType);	 // Average in NAK quality to exponential averager.  
-					Gearshift_9();		//' gear shift based on average quality or Shift Down if intNAKcnt >= 10
-					
-					if (intShiftUpDn != 0)
+
+					if (strFrameType[bytLastARQDataFrameSent][0] == 'O')		// OFDM
 					{
-						dttTimeoutTrip = Now;	 // Retrigger the timeout on a shift and clear the NAK counter
-						intNAKctr = 0;
-						SendData();		//Added 0.3.5.2     Restore the last frames data, Send new data from outbound queue and set up repeats
+						ProcessOFDMNak(0);
 					}
-					intACKctr = 0;
+					else
+					{
+				
+						ComputeQualityAvg(38 + 2 * intFrameType);	 // Average in NAK quality to exponential averager.  
+						Gearshift_9();		//' gear shift based on average quality or Shift Down if intNAKcnt >= 10
+					
+						if (intShiftUpDn != 0)
+						{
+							dttTimeoutTrip = Now;	 // Retrigger the timeout on a shift and clear the NAK counter
+							intNAKctr = 0;
+							SendData();		//Added 0.3.5.2     Restore the last frames data, Send new data from outbound queue and set up repeats
+						}
+				
+						intACKctr = 0;
+					}
 				}
                 
 				//     For now don't try and change the current data frame the simple gear shift will change it on the next frame 
@@ -2202,7 +2395,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				blnEnbARQRpt = FALSE;
 
 				EncLen = Encode4FSKControl(END, bytSessionID, bytEncodedBytes);
-				Mod4FSKDataAndPlay(END, &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+				Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 				return;
 			}
 				
@@ -2221,7 +2414,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				{
 					dttLastFECIDSent = Now;
 					EncLen = Encode4FSKIDFrame(strLocalCallsign, GridSquare, bytEncodedBytes);
-					Mod4FSKDataAndPlay(0x30, &bytEncodedBytes[0], 16, 0);		// only returns when all sent
+					Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
 				}
 					
 				SetARDOPProtocolState(DISC);
@@ -2245,6 +2438,8 @@ int IRSNegotiateBW(int intConReqFrameType)
 	//	returns the correct ConAck frame number to establish the session bandwidth to the ISS or the ConRejBW frame number if incompatible 
     //  if acceptable bandwidth sets stcConnection.intSessionBW
 
+	UseOFDM = FALSE;
+
 	switch (ARQBandwidth)
 	{
 	case B200FORCED:
@@ -2257,6 +2452,14 @@ int IRSNegotiateBW(int intConReqFrameType)
 		break;
 
 	case B500FORCED:
+
+		if (intConReqFrameType == OConReq500)
+		{
+			UseOFDM = TRUE;
+			intSessionBW = 500;
+			return ConAck500;
+		}
+
 		
 		if ((intConReqFrameType >= 0x32 && intConReqFrameType <= 0x34) || intConReqFrameType == 0x36)
 		{
@@ -2275,6 +2478,14 @@ int IRSNegotiateBW(int intConReqFrameType)
 		break;
 
 	case B2000FORCED:
+
+		if (intConReqFrameType == OConReq2500)
+		{
+			UseOFDM = TRUE;
+			intSessionBW = 2000;
+			return ConAck2000;
+		}
+
 		
 		if (intConReqFrameType == 0x34 || intConReqFrameType == 0x38)
 		{
@@ -2293,6 +2504,14 @@ int IRSNegotiateBW(int intConReqFrameType)
 		break;
 
 	case B500MAX:
+
+		if (intConReqFrameType == OConReq500)
+		{
+			UseOFDM = TRUE;
+			intSessionBW = 500;
+			return ConAck500;
+		}
+
 		
 		if (intConReqFrameType == 0x31 || intConReqFrameType == 0x35)
 		{
@@ -2308,6 +2527,13 @@ int IRSNegotiateBW(int intConReqFrameType)
 
 	case B1000MAX:
 		
+		if (intConReqFrameType == OConReq500)
+		{
+			UseOFDM = TRUE;
+			intSessionBW = 500;
+			return ConAck500;
+		}
+
 		if (intConReqFrameType == 0x31 || intConReqFrameType == 0x35)
 		{
 			intSessionBW = 200;
@@ -2325,6 +2551,20 @@ int IRSNegotiateBW(int intConReqFrameType)
 		}
            
 	case B2000MAX:
+				
+		if (intConReqFrameType == OConReq500)
+		{
+			UseOFDM = TRUE;
+			intSessionBW = 500;
+			return ConAck500;
+		}
+
+		if (intConReqFrameType == OConReq2500)
+		{
+			UseOFDM = TRUE;
+			intSessionBW = 2000;
+			return ConAck2000;
+		}
 
 		if (intConReqFrameType == 0x31 || intConReqFrameType == 0x35)
 		{
@@ -2398,7 +2638,7 @@ BOOL SendARQConnectRequest(char * strMycall, char * strTargetCall)
 	intFrameRepeatInterval = 2000;  // ms ' Finn reported 7/4/2015 that 1600 was too short ...need further evaluation but temporarily moved to 2000 ms
 	blnEnbARQRpt = TRUE;
 
-	Mod4FSKDataAndPlay(bytEncodedBytes[0], &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+	Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 
 	//' Update the main form menu status lable 
     //        Dim stcStatus As Status = Nothing
@@ -2426,7 +2666,7 @@ BOOL Send10MinID()
 
 		dttLastFECIDSent = Now;
 		EncLen = Encode4FSKIDFrame(strLocalCallsign, GridSquare, bytEncodedBytes);
-		Mod4FSKDataAndPlay(0x30, &bytEncodedBytes[0], 16, 0);		// only returns when all sent		
+		Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent		
 		return TRUE;
 	}
 	return FALSE;
@@ -2455,7 +2695,7 @@ BOOL CheckForDisconnect()
 			return TRUE;
 
 		EncLen = Encode4FSKControl(DISCFRAME, bytSessionID, bytEncodedBytes);
-		Mod4FSKDataAndPlay(DISCFRAME, &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+		Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 		return TRUE;
 	}
 	return FALSE;
@@ -2486,7 +2726,6 @@ void Abort()
 	if (ProtocolState == IDLE || ProtocolState == IRS || ProtocolState == IRStoISS)
 		GetNextARQFrame();
 }
-
 void ClearTuningStats()
 {
 	intLeaderDetects = 0;
@@ -2495,9 +2734,11 @@ void ClearTuningStats()
     intAccumFSKTracking = 0;
     intAccumPSKTracking = 0;
     intAccumQAMTracking = 0;
+    intAccumOFDMTracking = 0;
     intFSKSymbolCnt = 0;
     intPSKSymbolCnt = 0;
     intQAMSymbolCnt = 0;
+    intOFDMSymbolCnt = 0;
     intGoodFSKFrameTypes = 0;
     intFailedFSKFrameTypes = 0;
     intGoodFSKFrameDataDecodes = 0;
@@ -2510,8 +2751,18 @@ void ClearTuningStats()
     intGoodQAMFrameDataDecodes = 0;
     intGoodQAMSummationDecodes = 0;
     intFailedQAMFrameDataDecodes = 0;
+    intGoodOFDMFrameDataDecodes = 0;
+    intGoodQAMSummationDecodes = 0;
+    intFailedOFDMFrameDataDecodes = 0;
+    intAvgOFDMQuality = 0;
     intAvgFSKQuality = 0;
     intAvgPSKQuality = 0;
+	intGoodOFDMFrameDataDecodes = 0;
+    intGoodQAMSummationDecodes = 0;
+    intFailedOFDMFrameDataDecodes = 0;
+    intAvgOFDMQuality = 0;
+
+
     dblFSKTuningSNAvg = 0;
     dblLeaderSNAvg = 0;
     dblAvgPSKRefErr = 0;
@@ -2527,6 +2778,7 @@ void ClearTuningStats()
     dblAvgCorMaxToMaxProduct = 0;
 	intConReqSN = 0;
 	intConReqQuality = 0;
+	intTimeouts = 0;
 }
 
 void ClearQualityStats()
@@ -2541,7 +2793,16 @@ void ClearQualityStats()
 	intPSKQuality[1] = 0;
 	intPSKQualityCnts[0] = 0;
 	intPSKQualityCnts[1] = 0;	// Counts for 4PSK, 8PSK modulation modes 
-    intFSKSymbolsDecoded = 0;
+
+	memset(intOFDMQuality, 0, sizeof(intOFDMQuality));
+	memset(intOFDMQualityCnts, 0, sizeof(intOFDMQualityCnts));
+	memset(OFDMCarriersReceived, 0, sizeof(OFDMCarriersReceived));
+	memset(OFDMCarriersDecoded, 0, sizeof(OFDMCarriersDecoded));
+	memset(OFDMCarriersNaked, 0, sizeof(OFDMCarriersNaked));
+	memset(OFDMCarriersAcked, 0, sizeof(OFDMCarriersAcked));
+
+
+	intFSKSymbolsDecoded = 0;
     intPSKSymbolsDecoded = 0;
 
 	intQAMQuality = 0;
@@ -2549,18 +2810,17 @@ void ClearQualityStats()
     intQAMSymbolsDecoded = 0;
 }
 
-// Sub to Write Tuning Stats to the Debug Log 
-
 void LogStats()
 {
 	int intTotFSKDecodes = intGoodFSKFrameDataDecodes + intFailedFSKFrameDataDecodes;
 	int intTotPSKDecodes = intGoodPSKFrameDataDecodes + intFailedPSKFrameDataDecodes;
+	int intTotOFDMDecodes = intGoodOFDMFrameDataDecodes + intFailedOFDMFrameDataDecodes;
 	int i;
 
 	Statsprintf("************************* ARQ session stats with %s  %d minutes ****************************", strRemoteCallsign, (Now - dttStartSession) /60000); 
 	Statsprintf("     LeaderDetects= %d   AvgLeader S+N:N(3KHz noise BW)= %f dB  LeaderSyncs= %d", intLeaderDetects, dblLeaderSNAvg - 23.8, intLeaderSyncs);
 	Statsprintf("     AvgCorrelationMax:MaxProd= %f over %d  correlations", dblAvgCorMaxToMaxProduct, intEnvelopeCors);
-	Statsprintf("     FrameSyncs=%d  Good Frame Type Decodes=%d  Failed Frame Type Decodes =%d", intFrameSyncs, intGoodFSKFrameTypes, intFailedFSKFrameTypes);
+	Statsprintf("     FrameSyncs=%d  Good Frame Type Decodes=%d  Failed Frame Type Decodes =%d Timeouts =%d", intFrameSyncs, intGoodFSKFrameTypes, intFailedFSKFrameTypes, intTimeouts);
 	Statsprintf("     Avg Frame Type decode distance= %f over %d decodes", dblAvgDecodeDistance, intDecodeDistanceCount);
 
 	if (intGoodFSKFrameDataDecodes + intFailedFSKFrameDataDecodes + intGoodFSKSummationDecodes > 0)
@@ -2589,6 +2849,15 @@ void LogStats()
 		Statsprintf(" ");
 	}
    
+	if (intGoodOFDMFrameDataDecodes + intFailedOFDMFrameDataDecodes + intGoodOFDMSummationDecodes > 0)
+	{
+		Statsprintf(" ");
+		Statsprintf("  OFDM:");
+		Statsprintf("     Good OFDM Data Frame Decodes=%d  RecoveredOFDMCarriers with Summation=%d  Failed OFDM Data Frame Decodes=%d", intGoodOFDMFrameDataDecodes, intGoodOFDMSummationDecodes, intFailedOFDMFrameDataDecodes);
+		Statsprintf("     AccumQAMTracking=%d  %d attempts over %d total OFDM Symbols",	intAccumOFDMTracking, intOFDMTrackAttempts, intOFDMSymbolCnt);
+	
+		Statsprintf(" ");
+	}
 	Statsprintf("  Squelch= %d BusyDet= %d Mode Shift UPs= %d   Mode Shift DOWNs= %d  Link Turnovers= %d",
 		Squelch, BusyDet, intShiftUPs, intShiftDNs, intLinkTurnovers);
 	Statsprintf(" ");
@@ -2612,16 +2881,28 @@ void LogStats()
 	if (intQAMQualityCnts > 0)
 		Statsprintf("     Avg QAM Quality=%d on %d frame(s)",  intQAMQuality / intQAMQualityCnts, intQAMQualityCnts);
 
+
+	for (i = 0; i < 8; i++)
+	{
+		if (intOFDMQualityCnts[i])
+			Statsprintf("     Avg OFDM/%s Quality=%d on %d frame(s)",  OFDMModes[i], intOFDMQuality[i] / intOFDMQualityCnts[i], intOFDMQualityCnts[i]);
+	}
+
 	// Experimental logging of Frame Type ACK and NAK counts
 
 	Statsprintf("");
-	Statsprintf("Type              ACKS  NAKS");
+	Statsprintf("Type               ACKS  NAKS");
 
 	for (i = 0; i < bytFrameTypesForBWLength; i++)
 	{
-		Statsprintf("%-16s %5d %5d", Name(bytFrameTypesForBW[i]), ModeHasWorked[i], ModeNAKS[i]);
+		Statsprintf("%-17s %5d %5d", Name(bytFrameTypesForBW[i]), ModeHasWorked[i], ModeNAKS[i]);
 	}
 
+	for (i = 0; i < 8; i++)
+	{
+		if (OFDMCarriersReceived[i])
+			Statsprintf("OFDM/%s  Total Carriers %5d Decoded Carriers %5d", OFDMModes[i], OFDMCarriersReceived[i], OFDMCarriersDecoded[i]);
+	}
 
 	Statsprintf("************************************************************************************************");
 

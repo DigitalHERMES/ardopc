@@ -8,6 +8,8 @@ FILE * fp1;
 
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 
+void ModOFDMDataAndPlay(unsigned char * bytEncodedBytes, int Len, int intLeaderLen);
+
 // Function to generate the Two-tone leader and Frame Sync (used in all frame types) 
 
 extern short Dummy;
@@ -91,7 +93,7 @@ void SendLeaderAndSYNC(UCHAR * bytEncodedBytes, int intLeaderLen)
 }
 
 
-void Mod4FSKDataAndPlay(int Type, unsigned char * bytEncodedBytes, int Len, int intLeaderLen)
+void Mod4FSKDataAndPlay(unsigned char * bytEncodedBytes, int Len, int intLeaderLen)
 {
 	// Function to Modulate data encoded for 4FSK, create
 	// the 16 bit samples and send to sound interface
@@ -102,6 +104,7 @@ void Mod4FSKDataAndPlay(int Type, unsigned char * bytEncodedBytes, int Len, int 
 	BOOL blnOdd;
 
 	int intSample;
+	int Type = bytEncodedBytes[0];
 
     char strType[18] = "";
     char strMod[16] = "";
@@ -120,6 +123,7 @@ void Mod4FSKDataAndPlay(int Type, unsigned char * bytEncodedBytes, int Len, int 
 		return;
 
 	WriteDebugLog(LOGDEBUG, "Sending Frame Type %s", strType);
+	DrawTXFrame(strType);
 
 	if (Type == PktFrameHeader)
 	{
@@ -364,6 +368,7 @@ void Mod8FSKDataAndPlay(int Type, unsigned char * bytEncodedBytes, int Len, int 
 		return;
 
 	WriteDebugLog(LOGDEBUG, "Sending Frame Type %s", strType);
+	DrawTXFrame(strType);
 
 	initFilter(200,1500);
 
@@ -439,6 +444,7 @@ void Mod16FSKDataAndPlay(int Type, unsigned char * bytEncodedBytes, int Len, int
 		return;
 
 	WriteDebugLog(LOGDEBUG, "Sending Frame Type %s", strType);
+	DrawTXFrame(strType);
 
 	initFilter(500,1500);
 
@@ -507,6 +513,7 @@ void Mod4FSK600BdDataAndPlay(int Type, unsigned char * bytEncodedBytes, int Len,
 		return;
 
 	WriteDebugLog(LOGDEBUG, "Sending Frame Type %s", strType);
+	DrawTXFrame(strType);
 
 	initFilter(2000,1500);
 
@@ -600,7 +607,7 @@ void ModPSKDataAndPlay(int Type, unsigned char * bytEncodedBytes, int Len, int i
 	int intPeakAmp;
 	int intCarIndex;
 
-	UCHAR bytLastSym[9]; // = {0}; // Holds the last symbol sent (per carrier). bytLastSym(4) is 1500 Hz carrier (only used on 1 carrier modes) 
+	UCHAR bytLastSym[MAXCAR]; // = {0}; // Holds the last symbol sent (per carrier). bytLastSym(4) is 1500 Hz carrier (only used on 1 carrier modes) 
  
 	if (!FrameInfo(Type, &blnOdd, &intNumCar, strMod, &intBaud, &intDataLen, &intRSLen, &bytMinQualThresh, strType))
 		return;
@@ -658,6 +665,7 @@ void ModPSKDataAndPlay(int Type, unsigned char * bytEncodedBytes, int Len, int i
 	}
 	
 	WriteDebugLog(LOGDEBUG, "Sending Frame Type %s", strType);
+	DrawTXFrame(strType);
 
 /*	// DOnt use PSK Header at the moment
 	if (Type == PktFrameHeader)
@@ -995,7 +1003,7 @@ void RemodulateLastFrame()
 		if (bytEncodedBytes[0] >= 0x7A && bytEncodedBytes[0] <= 0x7D)
 			Mod4FSK600BdDataAndPlay(bytEncodedBytes[0], bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
 		else
-			Mod4FSKDataAndPlay(bytEncodedBytes[0], bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
+			Mod4FSKDataAndPlay(bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
 
 		return;
 	}
@@ -1009,6 +1017,12 @@ void RemodulateLastFrame()
 		Mod8FSKDataAndPlay(bytEncodedBytes[0], bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
 		return;
 	}
+	if (strcmp(strMod, "OFDM") == 0)
+	{
+		ModOFDMDataAndPlay(bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
+		return;
+	}
+
 	ModPSKDataAndPlay(bytEncodedBytes[0], bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
 }
 
@@ -1019,14 +1033,14 @@ static int intN = 120;				//Length of filter 12000/100
 static float dblRn;
 
 static float dblR2;
-static float dblCoef[32] = {0.0f};			// the coefficients
+static float dblCoef[34] = {0.0f};			// the coefficients
 float dblZin = 0, dblZin_1 = 0, dblZin_2 = 0, dblZComb= 0;  // Used in the comb generator
 
 // The resonators 
       
-float dblZout_0[32] = {0.0f};	// resonator outputs
-float dblZout_1[32] = {0.0f};	// resonator outputs delayed one sample
-float dblZout_2[32] = {0.0f};	// resonator outputs delayed two samples
+float dblZout_0[34] = {0.0f};	// resonator outputs
+float dblZout_1[34] = {0.0f};	// resonator outputs delayed one sample
+float dblZout_2[34] = {0.0f};	// resonator outputs delayed two samples
 
 int fWidth;				// Filter BandWidth
 int SampleNo;
@@ -1109,15 +1123,23 @@ void initFilter(int Width, int Centre)
 		break;
 
 	case 2000:
+
 		
 		// implements 21 100 Hz wide sections centered on 1500 Hz  (~2000 Hz wide @ - 30dB centered on 1500 Hz)
 
 		first = centreSlot - 10;
 		last = centreSlot + 10;		// 21 filter sections
-//		first = 5;
-//		last = 25;		// 7 filter sections
-	}
+		break;
 
+	case 2500:
+		
+		// implements 26 100 Hz wide sections centered on 1500 Hz  (~2000 Hz wide @ - 30dB centered on 1500 Hz)
+
+		intN = 120;
+		first = centreSlot - 13;
+		last = centreSlot + 13;		// 27 filter sections
+		break;
+	}
 
 	for (j = first; j <= last; j++)
 	{
@@ -1198,10 +1220,14 @@ void SampleSink(short Sample)
 
 			if (SampleNo >= intFilLen)
 			{
+//				if (j == first || j == last)
+//					intFilteredSample += 0.10601f * dblZout_0[j];
+//				else if (j == (first + 1) || j == (last - 1))
+//					intFilteredSample -= 0.59383f * dblZout_0[j];
+				
 				if (j == first || j == last)
-					intFilteredSample += 0.10601f * dblZout_0[j];
-				else if (j == (first + 1) || j == (last - 1))
-					intFilteredSample -= 0.59383f * dblZout_0[j];
+					intFilteredSample += 0.389f * dblZout_0[j];
+
 				else if ((j & 1) == 0)	// 14 15 16
 					intFilteredSample += (int)dblZout_0[j];
 				else
@@ -1232,6 +1258,7 @@ void SampleSink(short Sample)
 
 		case 2000:
 
+
 			// scale each by transition coeff and + (Even) or - (Odd) 
 			// Resonators 6 and 9 scaled by .15 to get best shape and side lobe supression to - 45 dB while keeping BW at 500 Hz @ -26 dB
 			// practical range of scaling .05 to .25
@@ -1241,6 +1268,24 @@ void SampleSink(short Sample)
 			{
 				if (j == first || j == last)
 					intFilteredSample +=  0.371f * dblZout_0[j];
+				else if ((j & 1) == 0)	// Even
+					intFilteredSample += (int)dblZout_0[j];
+				else
+					intFilteredSample -= (int)dblZout_0[j];
+			}
+			break;
+	
+		case 2500:
+
+			// scale each by transition coeff and + (Even) or - (Odd) 
+			// Resonators 2 and 28 scaled to get best shape and side lobe supression to - 45 dB while keeping BW at 500 Hz @ -26 dB
+			// practical range of scaling .05 to .25
+			// Scaling also accomodates for the filter "gain" of approx 60. 
+          
+			if (SampleNo >= intFilLen)
+			{
+				if (j == first || j == last)
+					intFilteredSample +=  0.3891f * dblZout_0[j];
 				else if ((j & 1) == 0)	// Even
 					intFilteredSample += (int)dblZout_0[j];
 				else

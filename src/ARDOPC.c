@@ -10,6 +10,7 @@
 #include <mmsystem.h>
 #pragma comment(lib, "winmm.lib")
 #else
+#include <unistd.h>
 #define SOCKET int
 #define closesocket close
 #endif
@@ -45,6 +46,7 @@ char Callsign[10] = "";
 BOOL wantCWID = FALSE;
 BOOL CWOnOff = FALSE;
 BOOL NeedID = FALSE;		// SENDID Command Flag
+BOOL NeedCWID = FALSE;		// SENDCWID Command Flag
 BOOL NeedConReq = FALSE;	// ARQCALL Command Flag
 BOOL NeedPing = FALSE;		// PING Command Flag
 BOOL NeedTwoToneTest = FALSE;
@@ -55,6 +57,14 @@ int PingCount;
 BOOL blnPINGrepeating = False;
 BOOL blnFramePending = False;	//  Cancels last repeat
 int intPINGRepeats = 0;
+
+#ifdef TEENSY
+int WaterfallActive = 0;		// Waterfall display off
+int SpectrumActive = 0;			// Spectrum display off
+#else
+int WaterfallActive = 1;		// Waterfall display on
+int SpectrumActive = 0;			// Spectrum display off
+#endif
 
 char ConnectToCall[16] = "";
 
@@ -86,7 +96,10 @@ BOOL RadioControl = FALSE;
 BOOL SlowCPU = FALSE;
 BOOL AccumulateStats = TRUE;
 BOOL Use600Modes = FALSE;
+BOOL EnableOFDM = TRUE;
+BOOL UseOFDM = TRUE;
 BOOL FSKOnly = FALSE;
+BOOL NegotiateBW = TRUE;
 BOOL fastStart = TRUE;
 BOOL ConsoleLogLevel = LOGDEBUG;
 BOOL FileLogLevel = LOGDEBUG;
@@ -96,6 +109,7 @@ BOOL gotGPIO = FALSE;
 BOOL useGPIO = FALSE;
 
 int pttGPIOPin = -1;
+BOOL pttGPIOInvert = FALSE;
 
 HANDLE hCATDevice = 0;	
 char CATPort[80] = "";			// Port for CAT.
@@ -128,6 +142,9 @@ int intFSKSymbolsDecoded;
 int intPSKQuality[2];
 int intPSKQualityCnts[2];
 int intPSKSymbolsDecoded; 
+int intOFDMQuality[8];
+int intOFDMQualityCnts[8];
+int intOFDMSymbolsDecoded; 
 
 int intQAMQuality;
 int intQAMQualityCnts;
@@ -177,6 +194,7 @@ int dttLastPINGSent;
 
 enum _ProtocolMode ProtocolMode = FEC;
 
+extern int intTimeouts;
 extern BOOL blnEnbARQRpt;
 extern BOOL blnDISCRepeating;
 extern char strRemoteCallsign[10];
@@ -207,6 +225,7 @@ const UCHAR bytValidFrameTypesALL[]=
 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
 35, 36, 41, 44, 45,
  46, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, PINGACK, PING,
+ OConReq500, OConReq2500,
 
 	0x40,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48,0x49,	// 40 - 4F
 	0x4A,0x4B,0x4C,0x4D,
@@ -214,7 +233,8 @@ const UCHAR bytValidFrameTypesALL[]=
 	0x60,0x61,0x62,0x63,0x64,0x65,						// 60 - 6F
 	0x70,0x71,0x72,0x73,0x74,0x75,0x7A,0x7B,0x7C,0x7D,	// 70 - 7F
 
- PktFrameHeader, 208, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234,
+ PktFrameHeader, DOFDM_500_55_E, DOFDM_500_55_O, DOFDM_2500_55_E,
+ DOFDM_2500_55_O, OFDMACK, 208, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234,
  124, 125, 208, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234,
  235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248,
  249, 250, 251, 252, 253, 254, 255};
@@ -229,7 +249,9 @@ const UCHAR bytValidFrameTypesISS[]=		// ACKs, NAKs, END, DISC, BREAK
 // Con req and Con ACK
  49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
  //ACK
- PktFrameHeader, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
+ PktFrameHeader, 
+ OFDMACK,
+ 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
  240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255};
 
 
@@ -239,40 +261,12 @@ int bytValidFrameTypesLengthISS = sizeof(bytValidFrameTypesISS);
 int bytValidFrameTypesLengthALL = sizeof(bytValidFrameTypesALL);
 int bytValidFrameTypesLength;
 
-/*
-const UCHAR isValidFrame[256]= 
-{
-	1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,	// 00 - 0F    ACK and NAK
-	1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,	// 10 - 1F
-	0,0,0,1,1,0,0,0,0,1,0,0,1,1,1,0,	// BREAK=23, IDLE=24, DISC=29, END=2C, ConRejBusy=2D, ConRejBW=2E
-
-	1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,	// 30 - 3F (3d PING Ack 3E Ping
-	1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,	// 40 - 4F
-	1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,	// 50 - 5F 
-	1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,	// 60 - 6F
-	1,1,1,1,1,1,0,0,0,0,1,1,1,1,0,0,	// 70 - 7F
-			
-
-	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,	// 80 - 8F
-	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,	// 90 - 9F
-	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,	// A0 - AF
-	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,	// B0 - BF
-	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,	// C0 - CF
-
-	// experimental SOUNDINGs D0
-
-	1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,	// D0 - DF
-	1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,	// e0 - eF    ACK and NAK
-	1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1		// f0 - ff
-};
-*/
-
 BOOL blnTimeoutTriggered = FALSE;
 
 //	We can't keep the audio samples for retry, but we can keep the
 //	encoded data
 
-unsigned char bytEncodedBytes[1800] ="";		// I think the biggest is 600 bd 768 + overhead
+unsigned char bytEncodedBytes[4500] ="";		// OFDM is big (maybe not 4500)
 int EncLen;
 
 
@@ -349,7 +343,7 @@ const char strFrameType[256][18] = {
 	"END",
 	"ConRejBusy",
 	"ConRejBW",
-	"",
+	"OConReq500",
 
 	//Special frames 1 Car, 200Hz,4FSK 0x30 +
 
@@ -368,7 +362,7 @@ const char strFrameType[256][18] = {
 	"ConAck2000",
 	"PingAck",
 	"Ping",
-	"",
+	"OConReq2500",
 	// 200 Hz Bandwidth Data 
 	// 1 Car PSK Data Modes 200 HzBW  100 baud 
 	
@@ -454,7 +448,9 @@ const char strFrameType[256][18] = {
 	"","","","","","","","","","","","","","","","",
 	"","","","","","","","","","","","","","","","",
 	"","","","","","","","","","","","","","","","",
-	"PktHddr","PktData","","","","","","","","","","","","","","", //C0
+	"PktHddr","PktData", "OFDM.500.55.E", "OFDM.500.55.O",
+	"OFDM.2500.55.E", "OFDM.2500.55.O", "OFDMAck",
+	"","","","","","","","","", //C0
 
 	//Frame Types 0xA0 to 0xDF reserved for experimentation 
 	"SOUND2K" //D0
@@ -477,7 +473,7 @@ const char shortFrameType[256][12] = {
 	"END",
 	"ConRejBusy",
 	"ConRejBW",
-	"",
+	"OConReq500",
 
 	//Special frames 1 Car, 200Hz,4F 0x30 +
 
@@ -494,8 +490,10 @@ const char shortFrameType[256][12] = {
 	"ConAck500",
 	"ConAck1K",
 	"ConAck2K",
-	// Types 0x3D to 0x3F reserved
-	"PingAck","Ping","",
+	"PingAck",
+	"Ping",
+	"OConReq2k5",
+
 	// 200 Hz Bandwidth Data 
 	// 1 Car P Data Modes 200 HzBW  100 baud 
 	
@@ -581,7 +579,9 @@ const char shortFrameType[256][12] = {
 	"","","","","","","","","","","","","","","","",
 	"","","","","","","","","","","","","","","","",
 	"","","","","","","","","","","","","","","","",
-	"PktHDDR","PktData","","","","","","","","","","","","","","", //C0
+	"PktHDDR","PktData", "OFDM.500", "OFDM.500", "OFDM.2500", "OFDM.2500",
+	"OFDMAck",
+	"","","","","","","","","", //C0
 
 	//Frame Types 0xA0 to 0xDF reserved for experimentation 
 	"SOUND2K" //D0
@@ -874,7 +874,8 @@ BOOL FrameInfo(UCHAR bytFrameType, int * blnOdd, int * intNumCar, char * strMod,
 	case 0x37:
 	case 0x38:
 	case 0x3E:		// Ping
-
+	case OConReq500:
+	case OConReq2500:
 		*blnOdd = (1 & bytFrameType) != 0;
 		*intNumCar = 1;
 		*intDataLen = 12;
@@ -1192,8 +1193,43 @@ BOOL FrameInfo(UCHAR bytFrameType, int * blnOdd, int * intNumCar, char * strMod,
 		*bytQualThres = 50;
  		break;
 
+	case OFDMACK:
+	
+		*blnOdd = 0;
+		*intNumCar = 1;
+		*intDataLen = 6;
+		*intRSLen = 4;
+		strcpy(strMod, "4FSK");
+		*intBaud = 100;
+		break;
+
+	case DOFDM_500_55_E:
+	case DOFDM_500_55_O:
+
+			*blnOdd = (1 & bytFrameType) != 0;
+			*intNumCar = 9;
+			*intDataLen = 40;
+			*intRSLen = 10;
+			strcpy(strMod, "OFDM");
+			*intBaud = 55;
+			break;
+
+	case DOFDM_2500_55_E:
+	case DOFDM_2500_55_O:
+
+			*blnOdd = (1 & bytFrameType) != 0;
+			*intNumCar = 43;
+			*intDataLen = 40;
+			*intRSLen = 10;
+			strcpy(strMod, "OFDM");
+			*intBaud = 55;
+			break;
+
+
+
+
 	default:
-		//'Logs.Exception("[PSKDataInfo] No data for frame type= H" & Format(bytFrameType, "x"))
+		WriteDebugLog(LOGCRIT, "No data for frame type = 0x" ,bytFrameType);
         return FALSE;
 	}
 	}
@@ -1671,20 +1707,38 @@ BOOL EncodeARQConRequest(char * strMyCallsign, char * strTargetCallsign, enum _A
 			
 			return 0;
 		}
-	}		
+	}	
+
+	UseOFDM = EnableOFDM;
+
 	if (ARQBandwidth == B200MAX)
 		bytReturn[0] = 0x31;
 	else if (ARQBandwidth == B500MAX)
-		bytReturn[0] = 0x32;
+	{
+		if (EnableOFDM)
+			bytReturn[0] = OConReq500;
+		else
+			bytReturn[0] = 0x32;
+	}
 	else if (ARQBandwidth == B1000MAX)
 		bytReturn[0] = 0x33;
 	else if (ARQBandwidth == B2000MAX)
-		bytReturn[0] = 0x34;
+	{
+		if (EnableOFDM)
+			bytReturn[0] = OConReq2500;
+		else
+			bytReturn[0] = 0x34;
+	}
 
 	else if (ARQBandwidth == B200FORCED)
 		bytReturn[0] = 0x35;
 	else if (ARQBandwidth == B500FORCED)
-		bytReturn[0] = 0x36;
+	{
+		if (EnableOFDM)
+			bytReturn[0] = OConReq500;
+		else
+			bytReturn[0] = 0x36;
+	}
 	else if (ARQBandwidth == B1000FORCED)
 		bytReturn[0] = 0x37;
 	else if (ARQBandwidth == B2000FORCED)
@@ -1888,7 +1942,7 @@ void SendID(BOOL blnEnableCWID)
 	// On embedded platforms we don't have the memory to create full sound stream before playiong,
 	// so this is structured differently from Rick's code
 
-	Mod4FSKDataAndPlay(0x30, &bytEncodedBytes[0], EncLen, 0);		// only returns when all sent
+	Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, 0);		// only returns when all sent
 
     if (blnEnableCWID)
 		sendCWID(Callsign, FALSE);
@@ -2232,9 +2286,7 @@ void ClearDataToSend()
 	bytDataToSendLength = 0;
 	FreeSemaphore();
 
-#ifdef TEENSY
 	SetLED(TRAFFICLED, FALSE);
-#endif
 	QueueCommandToHost("BUFFER 0");
 }
 
@@ -2244,7 +2296,7 @@ void SaveQueueOnBreak()
 }
 
 
-extern UCHAR bytEchoData[1280];		// has to be at least max packet size (?1280)
+extern UCHAR bytEchoData[127 * 80];		// has to be at least OFDM Window siz
 
 extern int bytesEchoed;
 
@@ -2280,10 +2332,8 @@ void RemoveDataFromQueue(int Len)
 
 	FreeSemaphore();
 
-#ifdef TEENSY
 	if (bytDataToSendLength == 0)
 		SetLED(TRAFFICLED, FALSE);
-#endif		
 
 	sprintf(HostCmd, "BUFFER %d", bytDataToSendLength);
 	QueueCommandToHost(HostCmd);
@@ -2298,6 +2348,8 @@ void CheckTimers()
 	if ((blnEnbARQRpt || blnDISCRepeating) && Now > dttNextPlay)
 	{
 		// No response Timeout
+
+		intTimeouts++;
 
 		if (GetNextFrame())
 		{
@@ -2336,7 +2388,7 @@ void CheckTimers()
 			// Send an ID frame (Handles protocol rule 4.0)
 		
 		EncLen = Encode4FSKIDFrame(strLocalCallsign, GridSquare, bytEncodedBytes);
-		Mod4FSKDataAndPlay(0x30, &bytEncodedBytes[0], 16, 0);		// only returns when all sent
+		Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
 		dttLastFECIDSent = Now;
 			
 		if (AccumulateStats) LogStats();
@@ -2350,7 +2402,7 @@ void CheckTimers()
 		ClearDataToSend();
 
 		EncLen = Encode4FSKControl(0x29, bytSessionID, bytEncodedBytes);
-		Mod4FSKDataAndPlay(0x29, &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+		Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
 
 		intFrameRepeatInterval = 2000;
 		SetARDOPProtocolState(DISC);
@@ -2404,7 +2456,7 @@ void CheckTimers()
 		if (CheckValidCallsignSyntax(strFinalIDCallsign))
 		{
 			EncLen = Encode4FSKIDFrame(strFinalIDCallsign, GridSquare, bytEncodedBytes);
-			Mod4FSKDataAndPlay(0x30, &bytEncodedBytes[0], 16, 0);		// only returns when all sent
+			Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
 			dttLastFECIDSent = Now;
 		}
 	}
@@ -2428,6 +2480,12 @@ void CheckTimers()
 	{
 		SendID(wantCWID);
 		NeedID = 0;
+	}
+
+	if (NeedCWID)
+	{
+		sendCWID(Callsign, FALSE);
+		NeedCWID = 0;
 	}
 
 	if (NeedTwoToneTest)
@@ -2729,13 +2787,26 @@ BOOL BusyDetect(float * dblMag, int intStart, int intStop)
 //	Subroutine to update the Busy detector when not displaying Spectrum or Waterfall (graphics disabled)
  		
 int LastBusyCheck = 0;
+extern UCHAR CurrentLevel;
+
+#ifdef PLOTSPECTRUM		
+float dblMagSpectrum[206];
+float dblMaxScale = 0.0f;
+extern UCHAR Pixels[4096];
+extern UCHAR * pixelPointer;
+#endif
 
 void UpdateBusyDetector(short * bytNewSamples)
 {
 	float dblReF[1024];
 	float dblImF[1024];
-
 	float dblMag[206];
+#ifdef PLOTSPECTRUM
+	float dblMagMax = 0.0000000001f;
+	float dblMagMin = 10000000000.0f;
+#endif
+	UCHAR Waterfall[256];			// Colour index values to send to GUI
+	int clrTLC = Lime;				// Default Bandwidth lines on waterfall
 	
 	static BOOL blnLastBusyStatus;
 	
@@ -2743,11 +2814,16 @@ void UpdateBusyDetector(short * bytNewSamples)
 	int intTuneLineLow, intTuneLineHi, intDelta;
 	int i;
 
-	if (ProtocolState != DISC)		// ' Only process busy when in DISC state
-		return;
-
 //	if (State != SearchingForLeader)
 //		return;						// only when looking for leader
+
+	if (ProtocolState != DISC)		// ' Only process busy when in DISC state
+	{
+		// Dont do busy, but may need waterfall or spectrum
+
+		if ((WaterfallActive | SpectrumActive) == 0)
+			return;					// No waterfall or spectrum 
+	}
 
 	if (Now - LastBusyCheck < 100)
 		return;
@@ -2762,6 +2838,11 @@ void UpdateBusyDetector(short * bytNewSamples)
             
 		dblMag[i] = powf(dblReF[i + 25], 2) + powf(dblImF[i + 25], 2);	 // first pass 
 		dblMagAvg += dblMag[i];
+#ifdef PLOTSPECTRUM		
+		dblMagSpectrum[i] = 0.2f * dblMag[i] + 0.8f * dblMagSpectrum[i];	
+		dblMagMax = max(dblMagMax, dblMagSpectrum[i]);
+		dblMagMin = min(dblMagMin, dblMagSpectrum[i]);
+#endif
 	}
 
 //	LookforPacket(dblMag, dblMagAvg, 206, &dblReF[25], &dblImF[25]);
@@ -2772,7 +2853,7 @@ void UpdateBusyDetector(short * bytNewSamples)
 	intTuneLineLow = max((103 - intDelta), 3);
 	intTuneLineHi = min((103 + intDelta), 203);
     
-//	if (ProtocolState == DISC)		// ' Only process busy when in DISC state
+	if (ProtocolState == DISC)		// ' Only process busy when in DISC state
 	{
 		blnBusyStatus = BusyDetect3(dblMag, intTuneLineLow, intTuneLineHi);
 		
@@ -2780,6 +2861,14 @@ void UpdateBusyDetector(short * bytNewSamples)
 		{
 			QueueCommandToHost("BUSY TRUE");
          	newStatus = TRUE;				// report to PTC
+
+			if (!WaterfallActive && !SpectrumActive)
+			{
+				UCHAR Msg[2];
+
+				Msg[0] = blnBusyStatus;
+				SendtoGUI('B', Msg, 1);
+			}	    
 		}
 		//    stcStatus.Text = "True"
             //    queTNCStatus.Enqueue(stcStatus)
@@ -2789,12 +2878,107 @@ void UpdateBusyDetector(short * bytNewSamples)
 		{
 			QueueCommandToHost("BUSY FALSE");
 			newStatus = TRUE;				// report to PTC
+
+			if (!WaterfallActive && !SpectrumActive)
+			{
+				UCHAR Msg[2];
+
+				Msg[0] = blnBusyStatus;
+				SendtoGUI('B', Msg, 1);
+			}	    
 		} 
 		//    stcStatus.Text = "False"
         //    queTNCStatus.Enqueue(stcStatus)
         //    'Debug.WriteLine("BUSY FALSE @ " & Format(DateTime.UtcNow, "HH:mm:ss"))
 
 		blnLastBusyStatus = blnBusyStatus;
+	}
+	
+	if (BusyDet == 0) 
+		clrTLC = Goldenrod;
+	else if (blnBusyStatus)
+		clrTLC = Fuchsia;
+
+	// At the moment we only get here what seaching for leader,
+	// but if we want to plot spectrum we should call
+	// it always
+
+
+
+	if (WaterfallActive)
+	{
+#ifdef PLOTWATERFALL
+		dblMagAvg = log10f(dblMagAvg / 5000.0f);
+	
+		for (i = 0; i < 206; i++)
+		{
+			// The following provides some AGC over the waterfall to compensate for avg input level.
+        
+			float y1 = (0.25f + 2.5f / dblMagAvg) * log10f(0.01 + dblMag[i]);
+			int objColor;
+
+			// Set the pixel color based on the intensity (log) of the spectral line
+			if (y1 > 6.5)
+				objColor = Orange; // Strongest spectral line 
+			else if (y1 > 6)
+				objColor = Khaki;
+			else if (y1 > 5.5)
+				objColor = Cyan;
+			else if (y1 > 5)
+				objColor = DeepSkyBlue;
+			else if (y1 > 4.5)
+				objColor = RoyalBlue;
+			else if (y1 > 4)
+				objColor = Navy;
+			else
+				objColor = Black;
+		
+			if (i == 102)
+				Waterfall[i] =  Tomato;  // 1500 Hz line (center)
+			else if (i == intTuneLineLow || i == intTuneLineLow - 1 || i == intTuneLineHi || i == intTuneLineHi + 1)
+				Waterfall[i] = clrTLC;
+			else
+				Waterfall[i] = objColor; // ' Else plot the pixel as received
+		}
+
+		// Send Signal level and Busy indicator to save extra packets
+
+		Waterfall[206] = CurrentLevel;
+		Waterfall[207] = blnBusyStatus;
+
+		SendtoGUI('W', Waterfall, 208);
+#endif
+	}
+	else if (SpectrumActive)
+	{
+#ifdef PLOTSPECTRUM
+		// This performs an auto scaling mechansim with fast attack and slow release
+        if (dblMagMin / dblMagMax < 0.0001) // more than 10000:1 difference Max:Min
+            dblMaxScale = max(dblMagMax, dblMaxScale * 0.9f);
+		else
+            dblMaxScale = max(10000 * dblMagMin, dblMagMax);
+   
+		clearDisplay();
+	
+		for (i = 0; i < 206; i++)
+		{
+		// The following provides some AGC over the spectrum to compensate for avg input level.
+        
+			float y1 = -0.25f * (SpectrumHeight - 1) *  log10f((max(dblMagSpectrum[i], dblMaxScale / 10000)) / dblMaxScale); // ' range should be 0 to bmpSpectrumHeight -1
+			int objColor  = Yellow;
+
+			Waterfall[i] = y1;
+		}
+         
+		// Send Signal level and Busy indicator to save extra packets
+
+		Waterfall[206] = CurrentLevel;
+		Waterfall[207] = blnBusyStatus;
+		Waterfall[208] = intTuneLineLow;
+		Waterfall[209] = intTuneLineHi;
+
+		SendtoGUI('X', Waterfall, 210);
+#endif
 	}
 }
 
@@ -2813,7 +2997,7 @@ void SendPING(char * strMycall, char * strTargetCall, int intRpt)
 	intFrameRepeatInterval = 2000;  // ms ' Finn reported 7/4/2015 that 1600 was too short ...need further evaluation but temporarily moved to 2000 ms
 	blnEnbARQRpt = TRUE;
 
-	Mod4FSKDataAndPlay(bytEncodedBytes[0], &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+	Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
         
 	blnAbort = False;
 	dttTimeoutTrip = Now;
@@ -2842,7 +3026,7 @@ void ProcessPingFrame(char * bytData)
 			// Ack Ping
 
 			EncLen = EncodePingAck(PINGACK, stcLastPingintRcvdSN, stcLastPingintQuality, bytEncodedBytes);
-			Mod4FSKDataAndPlay(PINGACK, &bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
+			Mod4FSKDataAndPlay(&bytEncodedBytes[0], EncLen, LeaderLength);		// only returns when all sent
                
 			WriteDebugLog(LOGDEBUG, "[ProcessPingFrame] PING from %s S:N=%d Qual=%d", bytData, stcLastPingintRcvdSN, stcLastPingintQuality);
 			SendCommandToHost("PINGREPLY");	

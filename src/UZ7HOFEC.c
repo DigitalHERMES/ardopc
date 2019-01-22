@@ -22,7 +22,7 @@
 
 int ComputeAng1_Ang2(int intAng1, int intAng2);
 void GoertzelRealImag(short intRealIn[], int intPtr, int N, float m, float * dblReal, float * dblImag);
-int Track1CarPSK(int intCarFreq, char * strPSKMod, float dblUnfilteredPhase, BOOL blnInit);
+int Track1CarPSK(int intCarFreq, int PSKMode, float dblUnfilteredPhase, BOOL blnInit);
 void MixNCOFilter(short * intNewSamples, int Length, float dblOffsetHz);
 
 
@@ -77,7 +77,7 @@ int Demod1CarPSKUZ7HO(short * Samples, int Start, int Carrier)
 
 		intPhases[Carrier][intPhasesLen] = intDiff;
 
-		Corrections = Track1CarPSK(CarFreq, strMod, atan2f(dblImag, dblReal), FALSE);
+		Corrections = Track1CarPSK(CarFreq, strMod[0] - '0', atan2f(dblImag, dblReal), FALSE);
 
 //		if (Corrections != 0)
 //		{
