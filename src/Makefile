@@ -18,5 +18,4 @@ install: ardop1ofdm
 -include *.d
 
 clean :
-	rm ardop1ofdm $(OBJS)
-
+	rm ardop1ofdm *.o
