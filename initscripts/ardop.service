@@ -1,0 +1,15 @@
+[Unit]
+Description=ARDOP daemon
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ardop1ofdm 8515 -c /dev/ttyUSB0 ARDOP ARDOP -k FEFE88E01C0001FD -u FEFE88E01C0000FD
+ExecStop=/usr/bin/killall -s QUIT ardop1ofdm
+IgnoreSIGPIPE=no
+#StandardOutput=null
+#StandardError=null
+StandardOutput=syslog
+StandardError=syslog
+
+[Install]
+WantedBy=multi-user.target

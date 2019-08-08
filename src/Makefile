@@ -13,7 +13,7 @@ ardopc: $(OBJS)
 
 install: ardop1ofdm
 	install ardop1ofdm $(PREFIX)/bin
-
+	install ../initscripts/ardop.service /etc/systemd/system
 
 -include *.d
 
