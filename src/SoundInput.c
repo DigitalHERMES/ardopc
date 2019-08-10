@@ -116,6 +116,7 @@ const char Bad[MAXCAR] = {0};	// All bad
 
 
 #define MAX_RAW_LENGTH 163     // Len Byte + Data + RS  + CRC I think!
+#define MAX_RAW_LENGTH_FSK	83	// MAX FSK 64 data + 16 RS
 #define MAX_DATA_LENGTH	8 * 128 // I think! 16QAM.2000.100
 
 // intToneMags should be an array with one row per carrier.
@@ -133,7 +134,7 @@ const char Bad[MAXCAR] = {0};	// All bad
 
 // looks like we have 4 samples for each 2 bits, which means 16 samples per byte.
 
-int intToneMags[4][16 * MAX_RAW_LENGTH] = {0};	// Need one per carrier
+int intToneMags[1][16 * MAX_RAW_LENGTH_FSK] = {0};	// Need one per carrier
 
 int intToneMagsIndex[4];
 
@@ -474,7 +475,7 @@ BOOL IsConReq(UCHAR intFrameType, BOOL AllowOFDM)
 {
 	if (intFrameType >= 0x31 && intFrameType <= 0x38)
 		return TRUE;
-	if (AllowOFDM && (intFrameType == OConReq2500 || intFrameType == OConReq500))
+	if (AllowOFDM && (intFrameType == OConReq2500 || intFrameType == OConReq500 || intFrameType == OConReq200))
 		return TRUE;
 
 	return FALSE;
@@ -559,10 +560,12 @@ void FSMixFilter2000Hz(short * intMixedSamples, int intMixedSamplesLength)
 	float intFilteredSample = 0;			//  Filtered sample
 
 	if (intFilteredMixedSamplesLength < 0)
-		WriteDebugLog(LOGERROR, "Corrupt intFilteredMixedSamplesLength");
+	{
+		WriteDebugLog(LOGERROR, "Corrupt intFilteredMixedSamplesLength %d, intFilteredMixedSamplesLength");
+		intFilteredMixedSamplesLength = 0;
+	}
 
 	dblRn = powf(xdblR, xintN);
-
 	dblR2 = powf(xdblR, 2);
 
 	// Initialize the coefficients
@@ -618,7 +621,7 @@ void FSMixFilter2000Hz(short * intMixedSamples, int intMixedSamplesLength)
 	memmove(intPriorMixedSamples, &intMixedSamples[intMixedSamplesLength - xintN], intPriorMixedSamplesLength * 2);		 
 
 	if (intFilteredMixedSamplesLength > 5000)
-		WriteDebugLog(LOGERROR, "Corrupt intFilteredMixedSamplesLength");
+		WriteDebugLog(LOGERROR, "Corrupt intFilteredMixedSamplesLength %d", intFilteredMixedSamplesLength);
 
 }
 
@@ -643,7 +646,10 @@ void FSMixFilter2500Hz(short * intMixedSamples, int intMixedSamplesLength)
 	float intFilteredSample = 0;			//  Filtered sample
 
 	if (intFilteredMixedSamplesLength < 0)
-		WriteDebugLog(LOGERROR, "Corrupt intFilteredMixedSamplesLength");
+	{
+		WriteDebugLog(LOGERROR, "Corrupt intFilteredMixedSamplesLength %d, intFilteredMixedSamplesLength");
+		intFilteredMixedSamplesLength = 0;
+	}
 
 	dblRn = powf(xdblR, xintN);
 
@@ -704,7 +710,7 @@ void FSMixFilter2500Hz(short * intMixedSamples, int intMixedSamplesLength)
 	if (intFilteredMixedSamplesLength > MaxFilteredMixedSamplesLength)
 		MaxFilteredMixedSamplesLength = intFilteredMixedSamplesLength;
 
-	if (intFilteredMixedSamplesLength > 3500)
+	if (intFilteredMixedSamplesLength > 5000)
 		WriteDebugLog(LOGCRIT, "Corrupt intFilteredMixedSamplesLength %d", intFilteredMixedSamplesLength);
 
 }
@@ -3894,7 +3900,7 @@ void DemodulateFrame(int intFrameType)
 		return;
 	}
 
-	if ((intFrameType >= 0x30 && intFrameType <= 0x38) || intFrameType == PING || intFrameType == OConReq500 || intFrameType == OConReq2500)
+	if ((intFrameType >= 0x30 && intFrameType <= 0x38) || intFrameType == PING || intFrameType == OConReq200  || intFrameType == OConReq500 || intFrameType == OConReq2500)
 	{
 		// ID and CON Req
 
@@ -4024,6 +4030,8 @@ void DemodulateFrame(int intFrameType)
 				DemodPSK();
 			break;
 
+		case DOFDM_200_55_E:
+		case DOFDM_200_55_O:
 		case DOFDM_500_55_E:
 		case DOFDM_500_55_O:
 		case DOFDM_2500_55_E:
@@ -4153,6 +4161,7 @@ BOOL DecodeFrame(int xxx, UCHAR * bytData)
 
 			break;
 
+		case OConReq200:
 		case OConReq500:
 		case OConReq2500:
 		case 0x31:
@@ -4445,8 +4454,10 @@ BOOL DecodeFrame(int xxx, UCHAR * bytData)
 			break;
 		}
 
+		case DOFDM_200_55_E:
 		case DOFDM_500_55_E:
 		case DOFDM_2500_55_E:
+		case DOFDM_200_55_O:
 		case DOFDM_500_55_O:
 		case DOFDM_2500_55_O:
 
@@ -4458,11 +4469,14 @@ BOOL DecodeFrame(int xxx, UCHAR * bytData)
 				blnDecodeOK = TRUE;
 
 			if (blnDecodeOK)
-				DrawRXFrame(1, Name(intFrameType));
+			{
+				char fType[64];
+				
+				sprintf(fType, "%s/%s", Name(intFrameType), OFDMModes[RXOFDMMode]); 
+				DrawRXFrame(1, fType);
+			}
 
 			break;
-
-
 
 
 //                ' Experimental Sounding frame

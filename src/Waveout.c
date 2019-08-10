@@ -63,6 +63,9 @@ BOOL Loopback = FALSE;
 char CaptureDevice[80] = "0"; //"2";
 char PlaybackDevice[80] = "0"; //"1";
 
+BOOL UseLeft = 1;
+BOOL UseRight = 1;
+
 char * CaptureDevices = NULL;
 char * PlaybackDevices = NULL;
 

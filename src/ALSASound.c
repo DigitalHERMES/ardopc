@@ -255,6 +255,11 @@ void PlatformSleep()
 
 // Set GPIO pin as output and set low
 
+extern int pttGPIOPin;
+extern BOOL pttGPIOInvert;
+
+
+
 void SetupGPIOPTT()
 {
 	if (pttGPIOPin == -1)
@@ -481,6 +486,9 @@ snd_pcm_t *	rechandle = NULL;
 
 int m_playchannels = 1;
 int m_recchannels = 1;
+
+BOOL UseLeft = TRUE;
+BOOL UseRight = TRUE;
 
 char SavedCaptureDevice[256];	// Saved so we can reopen
 char SavedPlaybackDevice[256];
@@ -889,7 +897,7 @@ int OpenSoundPlayback(char * PlaybackDevice, int m_sampleRate, int channels, cha
 		}
 	}
 	
-	Debugprintf("Play channel count set to %d", channels);
+//	Debugprintf("Play using %d channels", channels);
 
 	if ((err = snd_pcm_hw_params (playhandle, hw_params)) < 0) {
 		Debugprintf("cannot set parameters (%s)", snd_strerror(err));
@@ -906,7 +914,7 @@ int OpenSoundPlayback(char * PlaybackDevice, int m_sampleRate, int channels, cha
 	Savedplaychannels = m_playchannels = channels;
 
 	MaxAvail = snd_pcm_avail_update(playhandle);
-	Debugprintf("Playback Buffer Size %d", (int)MaxAvail);
+//	Debugprintf("Playback Buffer Size %d", (int)MaxAvail);
 
 	return true;
 }
@@ -967,27 +975,33 @@ int OpenSoundCapture(char * CaptureDevice, int m_sampleRate, char * ErrorMsg)
 			Debugprintf("cannot set capture sample rate (%s)", snd_strerror(err));
 		return false;
 	}
-	
+
 	m_recchannels = 1;
+
+	if (UseLeft == 0 || UseRight == 0)
+		m_recchannels = 2;					// L/R implies stereo
 	
-	if ((err = snd_pcm_hw_params_set_channels (rechandle, hw_params, 1)) < 0)
+	if ((err = snd_pcm_hw_params_set_channels (rechandle, hw_params, m_recchannels)) < 0)
 	{
 		if (ErrorMsg)
-			sprintf (ErrorMsg, "cannot set rec channel count to 1 (%s)", snd_strerror(err));
+			sprintf (ErrorMsg, "cannot set rec channel count to %d (%s)" ,m_recchannels, snd_strerror(err));
 		else
-			Debugprintf("cannot set rec channel count to 1 (%s)", snd_strerror(err));
+			Debugprintf("cannot set rec channel count to %d (%s)", m_recchannels, snd_strerror(err));
 	
-		m_recchannels = 2;
-
-		if ((err = snd_pcm_hw_params_set_channels (rechandle, hw_params, 2)) < 0)
+		if (m_recchannels  == 1)
 		{
-			Debugprintf("cannot set rec channel count to 2 (%s)", snd_strerror(err));
-			return false;
+			m_recchannels = 2;
+
+			if ((err = snd_pcm_hw_params_set_channels (rechandle, hw_params, 2)) < 0)
+			{
+				Debugprintf("cannot set rec channel count to 2 (%s)", snd_strerror(err));
+				return false;
+			}
+			if (ErrorMsg)
+				sprintf (ErrorMsg, "Record channel count set to 2 (%s)", snd_strerror(err));
+			else
+				Debugprintf("Record channel count set to 2 (%s)", snd_strerror(err));
 		}
-		if (ErrorMsg)
-			sprintf (ErrorMsg, "Record channel count set to 2 (%s)", snd_strerror(err));
-		else
-			Debugprintf("Record channel count set to 2 (%s)", snd_strerror(err));
 	}
 	
 	if ((err = snd_pcm_hw_params (rechandle, hw_params)) < 0) {
@@ -1001,6 +1015,8 @@ int OpenSoundCapture(char * CaptureDevice, int m_sampleRate, char * ErrorMsg)
 		Debugprintf("cannot prepare audio interface for use (%s)", snd_strerror(err));
 		return FALSE;
 	}
+
+//	Debugprintf("Capture using %d channels", m_recchannels);
 
 	int i;
 	short buf[256];
@@ -1021,9 +1037,20 @@ int OpenSoundCapture(char * CaptureDevice, int m_sampleRate, char * ErrorMsg)
 
 int OpenSoundCard(char * CaptureDevice, char * PlaybackDevice, int c_sampleRate, int p_sampleRate, char * ErrorMsg)
 {
+	int Channels = 1;
+
+	
+	if (UseLeft == 0)
+		printf("Using Right Channel of soundcard\n");
+	if (UseRight == 0)
+		printf("Using Left Channel of soundcard\n");
+
 	Debugprintf("Opening Playback Device %s Rate %d", PlaybackDevice, p_sampleRate);
 
-	if (OpenSoundPlayback(PlaybackDevice, p_sampleRate, 1, ErrorMsg))
+	if (UseLeft == 0 || UseRight == 0)
+		Channels = 2;						// L or R implies stereo
+
+	if (OpenSoundPlayback(PlaybackDevice, p_sampleRate, Channels, ErrorMsg))
 	{
 #ifdef SHARECAPTURE
 
@@ -1133,8 +1160,16 @@ int PackSamplesAndSend(short * input, int nSamples)
 		int i = 0;
 		for (n = 0; n < nSamples; n++)
 		{
-			*(sampptr++) = input[0];
-			*(sampptr++) = input[0];
+			if (UseLeft)
+				*(sampptr++) = input[0];
+			else
+				*(sampptr++) = 0;
+
+			if (UseRight)
+				*(sampptr++) = input[0];
+			else
+				*(sampptr++) = 0;
+
 			input ++;
 		}
 	}
@@ -1201,6 +1236,7 @@ int SoundCardRead(short * input, unsigned int nSamples)
 	int n;
 	int ret;
 	int avail;
+	int start;
 
 	if (rechandle == NULL)
 		return 0;
@@ -1256,7 +1292,12 @@ int SoundCardRead(short * input, unsigned int nSamples)
 	}
 	else
 	{
-		for (n = 0; n < (ret * 2); n+=2)			// return alternate
+		if (UseLeft)
+			start = 0;
+		else
+			start = 1;
+
+		for (n = start; n < (ret * 2); n+=2)			// return alternate
 		{
 			*(input++) = samples[n];
 		}
@@ -1284,7 +1325,8 @@ short * SendtoCard(short * buf, int n)
 		ProcessNewSamples(buf, 1200);		// signed
 	}
 
-	SoundCardWrite(&buffer[Index][0], n);
+	if (playhandle)
+		SoundCardWrite(&buffer[Index][0], n);
 
 //	txSleep(10);				// Run buckground while waiting 
 
@@ -1484,7 +1526,7 @@ void SoundFlush()
 
 	// Wait for tx to complete
 
-	while (1)
+	while (1 && playhandle)
 	{
 //		snd_pcm_sframes_t avail = snd_pcm_avail_update(playhandle);
 

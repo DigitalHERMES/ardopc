@@ -127,10 +127,9 @@ UCHAR bytLastCMD_DataSent[256];
 
 void TCPSendCommandToHost(char * strText)
 {
-	// This is from TNC side as identified by the leading "c:"   (Host side sends "C:")
-	// Subroutine to send a line of text (terminated with <Cr>) on the command port... All commands beging with "c:" and end with <Cr>
+	// Subroutine to send a line of text (terminated with <Cr>) on the command port... All commands end with <Cr>
 	// A two byte CRC appended following the <Cr>
-	// The strText cannot contain a "c:" sequence or a <Cr>
+	// The strText cannot contain a <Cr>
 	// Returns TRUE if command sent successfully.
 	// Form byte array to send with CRC
 
@@ -187,8 +186,7 @@ void TCPSendReplyToHost(char * strText)
 
 void TCPAddTagToDataAndSendToHost(UCHAR * bytData, char * strTag, int Len)
 {
-	//  This is from TNC side as identified by the leading "d:"   (Host side sends data with leading  "D:")
-	// includes 16 bit CRC check on Data Len + Data (does not CRC the leading "d:")
+	// includes 16 bit CRC check on Data Len + Data 
 	// strTag has the type Tag to prepend to data  "ARQ", "FEC" or "ERR" which are examined and stripped by Host (optionally used by host for display)
 	// Max data size should be 2000 bytes or less for timing purposes
 	// I think largest apcet is about 1360 bytes
@@ -200,8 +198,6 @@ void TCPAddTagToDataAndSendToHost(UCHAR * bytData, char * strTag, int Len)
 
 	if (blnInitializing)
 		return;
-
-	if (CommandTrace) WriteDebugLog(LOGINFO, "[AddTagToDataAndSendToHost] bytes=%d Tag %s", Len, strTag);
 
 	//	Have to save copy for possible retry (and possibly until previous 
 	//	command is acked
@@ -251,11 +247,11 @@ void ProcessReceivedControl()
 
 	//	Both command and data arrive here, which complicated things a bit
 
-	//	Commands start with c: and end with CR.
-	//	Data starts with d: and has a length field
-	//	“d:ARQ|FEC|ERR|, 2 byte count (Hex 0001 – FFFF), binary data, +2 Byte CRC”
+	//	Commands end with CR.
+	//	Data  has a length field
+	//	“ARQ|FEC|ERR|, 2 byte count (Hex 0001 – FFFF), binary data, +2 Byte CRC”
 
-	//	As far as I can see, shortest frame is “c:RDY<Cr> + 2 byte CRC” = 8 bytes
+	//	As far as I can see, shortest frame is “RDY<Cr> + 2 byte CRC” = 6 bytes
 
 	//	I don't think it likely we will get packets this long, but be aware...
 
@@ -359,11 +355,11 @@ void ProcessReceivedData()
 
 	//	Both command and data arrive here, which complicated things a bit
 
-	//	Commands start with c: and end with CR.
-	//	Data starts with d: and has a length field
-	//	“d:ARQ|FEC|ERR|, 2 byte count (Hex 0001 – FFFF), binary data, +2 Byte CRC”
+	//	Commands end with CR.
+	//	Data has a length field
+	//	“ARQ|FEC|ERR|, 2 byte count (Hex 0001 – FFFF), binary data, +2 Byte CRC”
 
-	//	As far as I can see, shortest frame is “c:RDY<Cr> + 2 byte CRC” = 8 bytes
+	//	As far as I can see, shortest frame is “RDY<Cr> + 2 byte CRC” = 8 bytes
 
 	//	I don't think it likely we will get packets this long, but be aware...
 

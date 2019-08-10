@@ -304,9 +304,9 @@ sendit:
 
 			unsigned char bytEncodedBytes[16];
 
-			EncLen = Encode4FSKIDFrame(Callsign, GridSquare, bytEncodedBytes);
-			Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
-
+//			EncLen = Encode4FSKIDFrame(Callsign, GridSquare, bytEncodedBytes);
+//			Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
+			SendID(wantCWID);
 			dttLastFECIDSent = Now;
 			return TRUE;
 		}

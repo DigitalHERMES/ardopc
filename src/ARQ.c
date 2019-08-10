@@ -40,7 +40,11 @@ extern int OFDMCarriersNaked[8];
 
 extern const char Good[MAXCAR];
 extern int intNumCar;
+
 extern UCHAR goodReceivedBlocks[128];
+extern UCHAR goodReceivedBlockLen[128];
+extern int BytesSenttoHost;
+extern int BytesSent;							// OFDM Sent but not acked
 
 int intLastFrameIDToHost = 0;
 int	intLastFailedFrameID = 0;
@@ -143,7 +147,8 @@ int GetNextFrameData(int * intUpDn, UCHAR * bytFrameTypeToSend, UCHAR * strMod, 
 BOOL CheckForDisconnect();
 BOOL Send10MinID();
 void ProcessPingFrame(char * bytData);
-int EncodeOFDMData(UCHAR bytFrameType, UCHAR * bytDataToSend, int Length, unsigned char * bytEncodedBytes);void ModOFDMDataAndPlay(unsigned char * bytEncodedBytes, int Len, int intLeaderLen);
+int EncodeOFDMData(UCHAR bytFrameType, UCHAR * bytDataToSend, int Length, unsigned char * bytEncodedBytes);
+void ModOFDMDataAndPlay(unsigned char * bytEncodedBytes, int Len, int intLeaderLen);
 void GetOFDMFrameInfo(int OFDMMode, int * intDataLen, int * intRSLen, int * Mode, int * Symbols);
 void ClearOFDMVariables();
 BOOL IsConReq(UCHAR intFrameType, BOOL AllowOFDM);
@@ -655,6 +660,7 @@ ModeToSpeed() = {
 
 static UCHAR DataModes200[] = {0x48, 0x42, 0x40, 0x44, 0x46};
 static UCHAR DataModes200FSK[] = {0x48};
+static UCHAR DataModes200OFDM[] = {0x48, DOFDM_200_55_E};
 
 //4FSK.200.50S, 4PSK.200.100S, 4PSK.200.100, 4PSK.500.100, 8PSK.500.100, 16QAM.500.100)
 // (310, 436, 756, 1509, 2566, 3024 bytes/min)
@@ -663,8 +669,8 @@ static UCHAR DataModes200FSK[] = {0x48};
 static UCHAR DataModes500[] = {0x48, 0x42, 0x40, 0x50, 0x52, 0x54};
 static UCHAR DataModes500FSK[] = {0x48};
 
-static UCHAR DataModes500OFDM[] = {0x48, 0x42, 0x40, DOFDM_500_55_E};
-
+//static UCHAR DataModes500OFDM[] = {0x48, 0x42, 0x40, DOFDM_200_55_E, DOFDM_500_55_E};
+static UCHAR DataModes500OFDM[] = {0x48, DOFDM_200_55_E, DOFDM_500_55_E};
 
 // 2000 Non-FM
 
@@ -684,8 +690,11 @@ static UCHAR DataModes1000FSK[] = {0x4C, 0x4A};
 static UCHAR DataModes2000[] = {0x4C, 0x4A, 0x50, 0x60, 0x70, 0x72, 0x74};
 static UCHAR DataModes2000FSK[] = {0x4C, 0x4A};
 
-static UCHAR DataModes2500OFDM[] = {0x4C, 0x4A, 0x50, 0x60,
-									DOFDM_500_55_E, DOFDM_2500_55_E};
+//static UCHAR DataModes2500OFDM[] = {0x4C, 0x4A, 0x50, 0x60,
+//									DOFDM_200_55_E, DOFDM_500_55_E, DOFDM_2500_55_E};
+
+static UCHAR DataModes2500OFDM[] = {0x4C, DOFDM_200_55_E, DOFDM_500_55_E, DOFDM_2500_55_E};
+
 //2000 FM
 //' These include the 600 baud modes for FM only.
 //' The following is temporary, Plan to replace 8PSK 8 carrier modes with high baud 4PSK and 8PSK.
@@ -707,6 +716,12 @@ UCHAR  * GetDataModes(int intBW)
 
 	if (intBW == 200)
 	{
+		if (UseOFDM)
+		{
+			bytFrameTypesForBWLength = sizeof(DataModes200OFDM);
+			return DataModes200OFDM;
+		}
+
 		if (FSKOnly)
 		{
 			bytFrameTypesForBWLength = sizeof(DataModes200FSK);
@@ -818,6 +833,134 @@ unsigned short  ModeNAKS[16] = {0};
 
 //  Subroutine to shift up to the next higher throughput or down to the next more robust data modes based on average reported quality 
 
+float dblQuality = 0.0f;
+
+VOID Gearshift_2(int intAckNakValue, BOOL blnInit)
+{
+	// Goal here is to create an algorithm that will:
+	//	1) Shift up if the number of DataACKHiQ received outnumber DataACKs received 
+	//	2) Don't shift on continous DataACKs
+	//	3) Shift down quickly on a few DataNAKLoQ
+	//	4) Shift down if DataNAKs exceed DataACKs .e.g.  < 50% ACKs 
+	//	This can be refined later with different or dynamic Trip points etc. 
+       
+
+	char strOldMode[18] = "";
+	char strNewMode[18] = "";
+
+	int intBytesRemaining = bytDataToSendLength;
+	
+    float dblLowTrip = -0.0f; // May wish to adjust should be at least > -1
+	float dblHiTrip = 1.2f;	  //  may wish to adjust should be at least  > 1
+	float dblAlpha = 0.25;
+	
+	if (blnInit)
+	{
+		intShiftUpDn = 0;
+		dblQuality = 1; // may want to optimize this initial value
+		WriteDebugLog(LOGDEBUG, "[ARDOPprotocol.Gearshift_2] dblQuality intitialized to %f", dblQuality);
+		ModeHasBeenTried[intFrameTypePtr] = 1;
+		return;
+	}
+
+	dblQuality = (dblAlpha * intAckNakValue) + ((1 - dblAlpha) * dblQuality);  // Exponenial low passfilter 
+
+	if (intAckNakValue > 0)
+	{
+		ModeHasWorked[intFrameTypePtr]++;
+		
+		// if the next new mode has been tried before, and immediately failed, don't try again
+		// till we get at least 5 sucessive acks
+
+		if (ModeHasBeenTried[intFrameTypePtr + 1] && ModeHasWorked[intFrameTypePtr + 1] == 0)
+		{
+			dblHiTrip = 1.5;
+		}
+	}
+	else
+	{
+		ModeNAKS[intFrameTypePtr]++;
+		if (ModeHasWorked[intFrameTypePtr] == 0 && intFrameTypePtr > 0)	// This mode has never worked
+			dblQuality = dblLowTrip;		// Revert immediately
+	}
+
+	if (dblQuality <= dblLowTrip) //  NAK Shift down conditions
+	{
+		if (intFrameTypePtr > 0)
+		{
+			// Can shift down
+
+			strcpy(strOldMode, Name(bytFrameTypesForBW[intFrameTypePtr]));
+			strOldMode[strlen(strOldMode) - 2] = 0;	// Remove .E
+			strcpy(strNewMode, Name(bytFrameTypesForBW[intFrameTypePtr - 1]));
+			strNewMode[strlen(strNewMode) - 2] = 0;
+	
+			WriteDebugLog(LOGINFO, "[ARDOPprotocol.Gearshift_2]  Shift Down: dblQuality= %f Shift down from Frame type %s New Mode: %s", dblQuality, strOldMode, strNewMode);
+			intShiftUpDn = -1;
+			intShiftDNs++;
+			dblQuality = 1;  // preset to nominal middle on shift
+			ModeHasBeenTried[intFrameTypePtr + intShiftUpDn] = 1;
+			
+			// Clear OFDM receive flags
+			memset(goodReceivedBlocks, 0, sizeof(goodReceivedBlocks)); 
+			memset(goodReceivedBlockLen, 0, sizeof(goodReceivedBlockLen));
+			BytesSenttoHost = 0;
+
+		}
+		else
+		{
+			// Low quality, but no more modes.
+			// Limit Quality, so we can go back up without excessive retries
+
+			dblQuality = dblLowTrip;
+			WriteDebugLog(LOGINFO, "[ARDOPprotocol.Gearshift_2]  No Change possible: dblQuality= %f", dblQuality);
+		}
+	}
+	else if (dblQuality > dblHiTrip)
+	{
+		if (intFrameTypePtr < (bytFrameTypesForBWLength - 1))
+		{
+			// Can shift up
+
+	 		strcpy(strOldMode, Name(bytFrameTypesForBW[intFrameTypePtr]));
+			strOldMode[strlen(strOldMode) - 2] = 0;
+			strcpy(strNewMode, Name(bytFrameTypesForBW[intFrameTypePtr + 1]));
+			strNewMode[strlen(strNewMode) - 2] = 0;
+			WriteDebugLog(LOGINFO, "[ARDOPprotocol.Gearshift_2]  Shift Up: dblQuality= %f Shift up from Frame type %s New Mode: %s", dblQuality, strOldMode, strNewMode);
+			intShiftUpDn = 1;
+			dblQuality = 1.0f;		// preset to nominal middle on shift
+			intShiftUPs++;
+			
+			// Clear OFDM receive flags
+
+			memset(goodReceivedBlocks, 0, sizeof(goodReceivedBlocks)); 
+			memset(goodReceivedBlockLen, 0, sizeof(goodReceivedBlockLen));
+			BytesSenttoHost = 0;
+			OFDMMode = PSK2;
+
+			ModeHasBeenTried[intFrameTypePtr + intShiftUpDn] = 1;
+		}
+		else
+		{
+			// Hi quality, but no more modes.
+			// Limit Quality, so we can go back down without excessive retries
+
+			dblQuality = dblHiTrip;
+			WriteDebugLog(LOGINFO, "[ARDOPprotocol.Gearshift_2]  No Change possible: dblQuality= %f", dblQuality);
+		}
+
+		// In the future may want to use something  to base shifting on how many bytes remaining vs capacity of the current frame (low priority)  
+	}
+	else
+	{
+		WriteDebugLog(LOGINFO, "[ARDOPprotocol.Gearshift_2]  No Change: dblQuality= %f", dblQuality);
+		intShiftUpDn = 0;
+	}
+}
+
+
+
+/*
 void Gearshift_9();
 
 void Gearshift_2(int Value, BOOL blnInit)
@@ -835,6 +978,7 @@ void Gearshift_2(int Value, BOOL blnInit)
 	}
 	Gearshift_9();
 }
+
 void Gearshift_9()
 {
 	// More complex mechanism to gear shift based on intAvgQuality, current state and bytes remaining.
@@ -908,7 +1052,7 @@ void Gearshift_9()
 		intShiftUPs++;
 	}
 }
-
+*/
 /*
 void Gearshift_5x()
 {
@@ -1156,8 +1300,41 @@ void SendData()
 			}
 			else if (strcmp(strMod, "OFDM") == 0)
 			{
+				int SavedOFDMMode = -1;			// used if we switch to a more robust mode cos we don't have much to send
+				int SavedFrameType;
+				int MaxRobust = 19 * 9;			// 500 2PSK
+
+				// bytDataToSendLength is data still queued. BytesSent is unacked data
+
+				// if none outstanding and all can be sent in most robust mode, use it
+
+				if ((bytCurrentFrameType & 0xFE) == DOFDM_200_55_E)
+					MaxRobust = 19 * 3;			// 200 2PSK
+
+				LastSentOFDMType = bytCurrentFrameType;
+
+				if (BytesSent == 0 && bytDataToSendLength <= MaxRobust)	
+				{
+					SavedOFDMMode = OFDMMode;
+					SavedFrameType = bytCurrentFrameType;
+					if (bytDataToSendLength <= (19 * 3)	)
+						bytCurrentFrameType = (bytCurrentFrameType & 1) | DOFDM_200_55_E;	//Keep Toggle
+					else
+						bytCurrentFrameType = (bytCurrentFrameType & 1) | DOFDM_500_55_E;	//Keep Toggle
+
+					OFDMMode = PSK2;
+					LastSentOFDMType = bytCurrentFrameType;
+				}
+
 				EncLen = EncodeOFDMData(bytCurrentFrameType, bytDataToSend, bytDataToSendLength, bytEncodedBytes);
 				ModOFDMDataAndPlay(bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
+				LastSentOFDMMode = OFDMMode;
+
+				if (SavedOFDMMode != -1)
+				{
+					OFDMMode = SavedOFDMMode;
+					bytCurrentFrameType = SavedFrameType;
+				}
 			}
 			else		// This handles PSK and QAM
 			{
@@ -1191,10 +1368,7 @@ void SendData()
 	}
 }
 
-
- 
-
-//	a simple function to get an available frame type for the session bandwidth. 
+// Return max data that can be send in current mode, after possible mode shift
     
 int GetNextFrameData(int * intUpDn, UCHAR * bytFrameTypeToSend, UCHAR * strMod, BOOL blnInitialize)
 {
@@ -1227,6 +1401,8 @@ int GetNextFrameData(int * intUpDn, UCHAR * bytFrameTypeToSend, UCHAR * strMod, 
 		updateDisplay();
 
 		if(DebugLog) WriteDebugLog(LOGDEBUG, "[ARDOPprotocol.GetNextFrameData] Initial Frame Type: %s", Name(bytCurrentFrameType));
+		Gearshift_2(0, True);  // initialize the gear shift settings and averages
+		blnFramePending = False;
 		*intUpDn = 0;
 		return 0;
 	}
@@ -1729,17 +1905,17 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				ClearDataToSend();
 
 				SetARDOPProtocolState(DISC);
-				InitializeConnection();
 				blnEnbARQRpt = FALSE;
 
 				if (CheckValidCallsignSyntax(strLocalCallsign))
 				{
 					dttLastFECIDSent = Now;
-					EncLen = Encode4FSKIDFrame(strLocalCallsign, GridSquare, bytEncodedBytes);
-					Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
+//					EncLen = Encode4FSKIDFrame(strLocalCallsign, GridSquare, bytEncodedBytes);
+//					Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
+					SendID(wantCWID);
 				}
-				
 
+				InitializeConnection();
 				return;
 			}
 
@@ -2022,8 +2198,9 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				if (CheckValidCallsignSyntax(strLocalCallsign))
 				{
 					dttLastFECIDSent = Now;
-					EncLen = Encode4FSKIDFrame(strLocalCallsign, GridSquare, bytEncodedBytes);
-					Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
+//					EncLen = Encode4FSKIDFrame(strLocalCallsign, GridSquare, bytEncodedBytes);
+//					Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
+					SendID(wantCWID);
 				}     
 				SetARDOPProtocolState(DISC); 
 				blnEnbARQRpt = FALSE;
@@ -2247,7 +2424,11 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 						}
 
 						ComputeQualityAvg(38 + 2 * (intFrameType - 0xE0)); // Average ACK quality to exponential averager.
-						Gearshift_9();		// gear shift based on average quality
+						
+						if (intAvgQuality > 80)
+							Gearshift_2(2, False);
+						else
+							Gearshift_2(1, False);
 					}
 				}
 				intNAKctr = 0;
@@ -2349,16 +2530,22 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				if (blnLastFrameSentData)
 				{
 			        intNAKctr++;
-
+	
+					ComputeQualityAvg(38 + 2 * intFrameType);	 // Average in NAK quality to exponential averager.  
+				
 					if (strFrameType[bytLastARQDataFrameSent][0] == 'O')		// OFDM
 					{
-						ProcessOFDMNak(0);
+						if (intAvgQuality < 70)
+							ProcessOFDMNak(0);
+						else
+							ProcessOFDMNak(DataNAK);
 					}
 					else
 					{
-				
-						ComputeQualityAvg(38 + 2 * intFrameType);	 // Average in NAK quality to exponential averager.  
-						Gearshift_9();		//' gear shift based on average quality or Shift Down if intNAKcnt >= 10
+						if (intAvgQuality < 70)
+							Gearshift_2(-2, False);
+						else
+							Gearshift_2(-1, False);
 					
 						if (intShiftUpDn != 0)
 						{
@@ -2413,8 +2600,9 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				if (CheckValidCallsignSyntax(strLocalCallsign))
 				{
 					dttLastFECIDSent = Now;
-					EncLen = Encode4FSKIDFrame(strLocalCallsign, GridSquare, bytEncodedBytes);
-					Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
+//					EncLen = Encode4FSKIDFrame(strLocalCallsign, GridSquare, bytEncodedBytes);
+//					Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
+					SendID(wantCWID);
 				}
 					
 				SetARDOPProtocolState(DISC);
@@ -2495,7 +2683,14 @@ int IRSNegotiateBW(int intConReqFrameType)
 		break;
 
 	case B200MAX:
-		
+
+		if (intConReqFrameType == OConReq200)
+		{
+			UseOFDM = TRUE;
+			intSessionBW = 200;
+			return ConAck200;
+		}
+
 		if (intConReqFrameType >= 0x31 && intConReqFrameType <= 0x35)
 		{
 			intSessionBW = 200;
@@ -2505,6 +2700,13 @@ int IRSNegotiateBW(int intConReqFrameType)
 
 	case B500MAX:
 
+		if (intConReqFrameType == OConReq200)
+		{
+			UseOFDM = TRUE;
+			intSessionBW = 200;
+			return ConAck200;
+		}
+
 		if (intConReqFrameType == OConReq500)
 		{
 			UseOFDM = TRUE;
@@ -2512,7 +2714,6 @@ int IRSNegotiateBW(int intConReqFrameType)
 			return ConAck500;
 		}
 
-		
 		if (intConReqFrameType == 0x31 || intConReqFrameType == 0x35)
 		{
 			intSessionBW = 200;
@@ -2527,6 +2728,13 @@ int IRSNegotiateBW(int intConReqFrameType)
 
 	case B1000MAX:
 		
+		if (intConReqFrameType == OConReq200)
+		{
+			UseOFDM = TRUE;
+			intSessionBW = 200;
+			return ConAck200;
+		}
+
 		if (intConReqFrameType == OConReq500)
 		{
 			UseOFDM = TRUE;
@@ -2552,6 +2760,13 @@ int IRSNegotiateBW(int intConReqFrameType)
            
 	case B2000MAX:
 				
+		if (intConReqFrameType == OConReq200)
+		{
+			UseOFDM = TRUE;
+			intSessionBW = 200;
+			return ConAck200;
+		}
+
 		if (intConReqFrameType == OConReq500)
 		{
 			UseOFDM = TRUE;

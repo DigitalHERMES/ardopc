@@ -225,7 +225,7 @@ const UCHAR bytValidFrameTypesALL[]=
 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
 35, 36, 41, 44, 45,
  46, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, PINGACK, PING,
- OConReq500, OConReq2500,
+ OConReq200, OConReq500, OConReq2500,
 
 	0x40,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48,0x49,	// 40 - 4F
 	0x4A,0x4B,0x4C,0x4D,
@@ -233,7 +233,7 @@ const UCHAR bytValidFrameTypesALL[]=
 	0x60,0x61,0x62,0x63,0x64,0x65,						// 60 - 6F
 	0x70,0x71,0x72,0x73,0x74,0x75,0x7A,0x7B,0x7C,0x7D,	// 70 - 7F
 
- PktFrameHeader, DOFDM_500_55_E, DOFDM_500_55_O, DOFDM_2500_55_E,
+ PktFrameHeader, DOFDM_200_55_E, DOFDM_200_55_O, DOFDM_500_55_E, DOFDM_500_55_O, DOFDM_2500_55_E,
  DOFDM_2500_55_O, OFDMACK, 208, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234,
  124, 125, 208, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234,
  235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248,
@@ -275,6 +275,9 @@ extern UCHAR bytSessionID;
 int intLastRcvdFrameQuality;
 
 int intAmp = 26000;	   // Selected to have some margin in calculations with 16 bit values (< 32767) this must apply to all filters as well. 
+
+
+// These are only used for FEC so don't include OFDM
 
 const char strAllDataModes[18][15] =
 		{"4FSK.200.50S", "4PSK.200.100S",
@@ -337,7 +340,7 @@ const char strFrameType[256][18] = {
 
         //Short Control Frames 1 Car, 200Hz,4FSK  ' Reassigned May 22, 2015 for maximum "distance"
  
-	"BREAK", "IDLE", "",
+	"BREAK", "IDLE", "OConReq200",
 	"", "", "",
 	"DISC", "", "",
 	"END",
@@ -448,9 +451,9 @@ const char strFrameType[256][18] = {
 	"","","","","","","","","","","","","","","","",
 	"","","","","","","","","","","","","","","","",
 	"","","","","","","","","","","","","","","","",
-	"PktHddr","PktData", "OFDM.500.55.E", "OFDM.500.55.O",
+	"PktHddr","PktData", "OFDM.500.55.E", "OFDM.500.55.O",//C0
 	"OFDM.2500.55.E", "OFDM.2500.55.O", "OFDMAck",
-	"","","","","","","","","", //C0
+	"","OFDM.200.55.E", "OFDM.200.55.O","","","","","","", 
 
 	//Frame Types 0xA0 to 0xDF reserved for experimentation 
 	"SOUND2K" //D0
@@ -467,7 +470,7 @@ const char shortFrameType[256][12] = {
 
         //Short Control Frames 1 Car, 200Hz,4F  ' Reassigned May 22, 2015 for maximum "distance"
  
-	"BREAK", "IDLE", "",
+	"BREAK", "IDLE", "OConReq200",
 	"", "", "",
 	"DISC", "", "",
 	"END",
@@ -581,7 +584,7 @@ const char shortFrameType[256][12] = {
 	"","","","","","","","","","","","","","","","",
 	"PktHDDR","PktData", "OFDM.500", "OFDM.500", "OFDM.2500", "OFDM.2500",
 	"OFDMAck",
-	"","","","","","","","","", //C0
+	"", "OFDM.200", "OFDM.200","","","","","","", //C0
 
 	//Frame Types 0xA0 to 0xDF reserved for experimentation 
 	"SOUND2K" //D0
@@ -874,6 +877,7 @@ BOOL FrameInfo(UCHAR bytFrameType, int * blnOdd, int * intNumCar, char * strMod,
 	case 0x37:
 	case 0x38:
 	case 0x3E:		// Ping
+	case OConReq200:
 	case OConReq500:
 	case OConReq2500:
 		*blnOdd = (1 & bytFrameType) != 0;
@@ -1202,6 +1206,17 @@ BOOL FrameInfo(UCHAR bytFrameType, int * blnOdd, int * intNumCar, char * strMod,
 		strcpy(strMod, "4FSK");
 		*intBaud = 100;
 		break;
+
+	case DOFDM_200_55_E:
+	case DOFDM_200_55_O:
+
+			*blnOdd = (1 & bytFrameType) != 0;
+			*intNumCar = 3;
+			*intDataLen = 40;
+			*intRSLen = 10;
+			strcpy(strMod, "OFDM");
+			*intBaud = 55;
+			break;
 
 	case DOFDM_500_55_E:
 	case DOFDM_500_55_O:
@@ -1712,7 +1727,12 @@ BOOL EncodeARQConRequest(char * strMyCallsign, char * strTargetCallsign, enum _A
 	UseOFDM = EnableOFDM;
 
 	if (ARQBandwidth == B200MAX)
-		bytReturn[0] = 0x31;
+	{
+		if (EnableOFDM)
+			bytReturn[0] = OConReq200;
+		else
+			bytReturn[0] = 0x31;
+	}
 	else if (ARQBandwidth == B500MAX)
 	{
 		if (EnableOFDM)
@@ -2387,8 +2407,10 @@ void CheckTimers()
 			// Confirmed proper operation of this timeout and rule 4.0 May 18, 2015
 			// Send an ID frame (Handles protocol rule 4.0)
 		
-		EncLen = Encode4FSKIDFrame(strLocalCallsign, GridSquare, bytEncodedBytes);
-		Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
+//		EncLen = Encode4FSKIDFrame(strLocalCallsign, GridSquare, bytEncodedBytes);
+//		Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
+
+		SendID(wantCWID);
 		dttLastFECIDSent = Now;
 			
 		if (AccumulateStats) LogStats();
@@ -2455,8 +2477,9 @@ void CheckTimers()
    
 		if (CheckValidCallsignSyntax(strFinalIDCallsign))
 		{
-			EncLen = Encode4FSKIDFrame(strFinalIDCallsign, GridSquare, bytEncodedBytes);
-			Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
+//			EncLen = Encode4FSKIDFrame(strFinalIDCallsign, GridSquare, bytEncodedBytes);
+//			Mod4FSKDataAndPlay(&bytEncodedBytes[0], 16, 0);		// only returns when all sent
+			SendID(wantCWID);
 			dttLastFECIDSent = Now;
 		}
 	}
@@ -3085,6 +3108,9 @@ unsigned short int compute_crc(unsigned char *buf,int len)
 	return fcs;
 }
 
+extern BOOL UseLeft;
+extern BOOL UseRight;
+
 static struct option long_options[] =
 {
 	{"ptt",  required_argument, 0 , 'p'},
@@ -3111,6 +3137,8 @@ char HelpScreen[] =
 	"-p device or --ptt device         Device to use for PTT control using RTS\n"
 	"-k string or --keystring string   String (In HEX) to send to the radio to key PTT\n"
 	"-u string or --unkeystring string String (In HEX) to send to the radio to unkeykey PTT\n"
+	"-L use Left Channel of Soundcard in stereo mode\n"
+	"-R use Right Channel of Soundcard in stereo mode\n"
 	"\n"
 	" CAT and RTS PTT can share the same port.\n"
 	" See the ardop documentation for more information on cat and ptt options\n"
@@ -3127,7 +3155,7 @@ VOID processargs(int argc, char * argv[])
 	{		
 		int option_index = 0;
 
-		c = getopt_long(argc, argv, "c:p:g::k:u:h", long_options, &option_index);
+		c = getopt_long(argc, argv, "c:p:g::k:u:hLR", long_options, &option_index);
 
 		// Check for end of operation or error
 		if (c == -1)
@@ -3211,6 +3239,16 @@ VOID processargs(int argc, char * argv[])
 
 		case 'c':
 			strcpy(CATPort, optarg);
+			break;
+
+		case 'L':
+			UseLeft = 1;
+			UseRight = 0;
+			break;
+
+		case 'R':
+			UseLeft = 0;
+			UseRight = 1;
 			break;
 
 		case '?':

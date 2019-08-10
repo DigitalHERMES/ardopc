@@ -16,7 +16,7 @@ We could send the same data (with same block number) on multiple carriers for re
 We need a ack frame with one bit per carrier (? 6 bytes) which is about 1 sec with 50 baud (do we need fec or just crc??).
 Could send ACK at 100 baud, shortening it a bit, but is overall throughput increace worth it?
 
-Using one byte block number but limit to 0 - 127. Window is 10160 in 16QAM
+Using one byte block number but limit to 0 - 127. Window is 10160 in 16QAM or 12700 for 32QAM
 unless we use a different block length for each mode. Takes 10% of 2FSK throughput.
 
 Receiver must be able to hold  window of frames (may be a problem with Teensy)
@@ -74,9 +74,16 @@ For Comparison 16QAM.2500.100
 #pragma warning(disable : 4244)		// Code does lots of float to int
 
 int OFDMMode;				// OFDM can use various modulation modes and redundancy levels
+int LastSentOFDMMode;		// For retries
+int LastSentOFDMType;		// For retries
+
+extern UCHAR bytCurrentFrameType;
+
 int RXOFDMMode = 0;
 
 const char OFDMModes[8][6] = {"PSK2", "PSK4", "PSK8", "QAM16", "PSK16", "QAM32", "Undef", "Undef"};  
+
+int OFDMFrameLen[8] = {19, 40, 57, 80, 80};		// Bytes per carrier for eacgh submode
 
 int OFDMCarriersReceived[8] = {0};
 int OFDMCarriersDecoded[8] = {0};
@@ -105,7 +112,7 @@ int NextOFDMBlock = 0;
 int UnAckedBlockPtr = 0;
 
 int CarriersSent;
-int BytesSent = 0;
+int BytesSent = 0;							// Sent but not acked
 
 int CarriersACKed;
 int CarriersNAKed;
@@ -189,6 +196,9 @@ extern int intNAKctr;
 extern int intACKctr;
 extern int intTimeouts;
 
+extern UCHAR goodReceivedBlocks[128];
+extern UCHAR goodReceivedBlockLen[128];
+
 void GoertzelRealImag(short intRealIn[], int intPtr, int N, float m, float * dblReal, float * dblImag);
 int ComputeAng1_Ang2(int intAng1, int intAng2);
 int Demod1CarOFDMChar(int Start, int Carrier, int intNumOfSymbols);
@@ -201,6 +211,7 @@ void Flush();
 BOOL  CheckCRC16(unsigned char * Data, int Length);
 void CorrectPhaseForTuningOffset(short * intPhase, int intPhaseLength, int intPSKMode);
 BOOL DemodOFDM();
+VOID Gearshift_2(int intAckNakValue, BOOL blnInit);
 
 void GenCRC16Normal(char * Data, int Length)
 {
@@ -233,7 +244,7 @@ void ProcessOFDMNak(int AckType)
 {
 	int AckedPercent;
 
-	// We only get an OFDM NAK if no data is saved, so safe to shift down
+	// We only get a NAK for an OFDM frame if no data is saved, so safe to shift down
 
 	CarriersNAKed += CarriersSent;
 
@@ -459,15 +470,16 @@ int ProcessOFDMAck(int AckType)
 
 			// Make sure there is somewhere to shift to
 
-			if (OFDMMode < PSK16 || CarriersSent < 43)
+//			if (OFDMMode < PSK16 || CarriersSent < 43)
+			if (OFDMMode < QAM16 || CarriersSent < 43)
 			{
 				// if next mode isn't working well delay shift up to prevent hunting
 
 				int NextMode = 	OFDMMode + 1;
 				int NextPercent= 0;
 					
-				if (NextMode == QAM16)
-					NextMode = PSK16;		// Skip QAM for testing
+	//			if (NextMode == QAM16)
+	//				NextMode = PSK16;		// Skip QAM for testing
 
 				if (OFDMCarriersNaked[NextMode])	// Only if we've tried it
 				{
@@ -503,21 +515,40 @@ int ProcessOFDMAck(int AckType)
 		DontSendNewData = FALSE;
 		Duplicate = LimitNewData = FALSE;
 
+		// If we sent the last frame in a more robust mode (as very short) we shouldn't use success to shift up
+
+		if (bytCurrentFrameType != LastSentOFDMType || OFDMMode != LastSentOFDMMode)
+			return Acked;
+
 		if (AckedPercent > 80 && CarriersACKed >= CarriersSent)
 		{
-			Gearshift_2(2, False);
+			// If we are in Low OFDM mode go up a bit before trying 2500 (up to 4PSK)
+
+			intShiftUpDn = 0;
+
+			if (OFDMMode)							// At least 4FSK
+				Gearshift_2(2, False);				// See if we can up carriers if running PSK
+
 			if (intShiftUpDn)
 			{
 				CarriersACKed = CarriersNAKed = 0;	// Reset counts
-				OFDMMode = PSK4;
+
+				// if going down try PSK4, if up PSK2
+
+				if (intShiftUpDn < 0)
+					OFDMMode = PSK4;
+				else
+					OFDMMode = PSK2;
 			}
 			else
 			{
-				if (OFDMMode < PSK16)
+//				if (OFDMMode < PSK16)
+				if (OFDMMode < QAM16)
 				{
 					OFDMMode++;
-					if (OFDMMode == QAM16)
-						OFDMMode = PSK16;		// Skip QAM dor testing
+
+	//				if (OFDMMode == QAM16)
+	//					OFDMMode = PSK16;		// Skip QAM for testing
 	
 					if (OFDMCarriersNaked[OFDMMode])	// Only if we've tried it
 					{
@@ -617,7 +648,7 @@ void GetOFDMFrameInfo(int OFDMMode, int * intDataLen, int * intRSLen, int * Mode
 
 		*intDataLen = 57;			// Must be multiple of 3
 		*intRSLen = 18;				// Must be multiple of 3 and even (so multiple of 6)
-		*Symbols = 8;
+		*Symbols = 8;				// Actually 8 symbols for 3 bytes
 		*Mode = 8;
 		break;
 
@@ -636,6 +667,14 @@ void GetOFDMFrameInfo(int OFDMMode, int * intDataLen, int * intRSLen, int * Mode
 		*intRSLen = 20;
 		*Symbols = 2;
 		*Mode = 8;
+		break;
+
+	case QAM32:
+
+		*intDataLen = 100;
+		*intRSLen = 125;
+		*Symbols = 8;				// Actually 8 symbols for 3 bytes
+		*Mode = 16;
 		break;
 
 	default:
@@ -692,6 +731,8 @@ int EncodeOFDMData(UCHAR bytFrameType, UCHAR * bytDataToSend, int Length, unsign
 	intEncodedDataPtr = 2;
 
 	UnAckedBlockPtr = 127;		// We send unacked blocks backwards
+
+	// Length is data still queued. BytesSent is unacked data
 
 	Length -= BytesSent;		// New data to send
 
@@ -1576,7 +1617,12 @@ void ModOFDMDataAndPlay(unsigned char * bytEncodedBytes, int Len, int intLeaderL
 	sprintf(fType, "%s/%s", strType, OFDMModes[OFDMMode]); 
 	DrawTXFrame(fType);
 
-	if (intNumCar == 9)
+	if (intNumCar == 3)
+	{
+		initFilter(500,1500);
+		OFDMLevel = 80;	
+	}
+	else if (intNumCar == 9)
 	{
 		initFilter(500,1500);
 		OFDMLevel = 100;	

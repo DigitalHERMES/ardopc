@@ -4,7 +4,7 @@
 #define ARDOPCHEADERDEFINED
 
 #define ProductName "ARDOP TNC"
-#define ProductVersion "1.0.4.1j-OFDMBPQ"
+#define ProductVersion "1.0.4.1q-OFDMBPQ"
 
 #ifdef CONST
 #undef CONST
@@ -389,6 +389,7 @@ extern struct SEM Semaphore;
 
 #define BREAK 0x23
 #define IDLEFRAME 0x24
+#define OConReq200 0x25
 #define DISCFRAME 0x29
 #define END 0x2C
 #define ConRejBusy 0x2D
@@ -407,11 +408,15 @@ extern struct SEM Semaphore;
 
 // OFDM modes
 
+
 #define DOFDM_500_55_E	0xC2
 #define DOFDM_500_55_O	0xC3
 
 #define DOFDM_2500_55_E	0xC4
 #define DOFDM_2500_55_O	0xC5
+
+#define DOFDM_200_55_E	0xC8
+#define DOFDM_200_55_O	0xC9
 
 #define OFDMACK	0xC6
 
@@ -677,7 +682,9 @@ BOOL EncodeARQConRequest(char * strMyCallsign, char * strTargetCallsign, enum _A
 #define PSK16	4			// Experimental - is it better than 16QAM?
 #define QAM32	5
 
-BOOL OFDMMode;				// OFDM can use various modulation modes and redundancy levels
+extern int OFDMMode;				// OFDM can use various modulation modes and redundancy levels
+extern int LastSentOFDMMode;		// For retries
+extern int LastSentOFDMType;		// For retries
 
 extern const char OFDMModes[8][6];
 
