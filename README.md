@@ -6,3 +6,5 @@ http://www.cantab.net/users/john.wiseman/Downloads/Beta/
 
 Source code fetched on 10 September 2019 from:
 http://www.cantab.net/users/john.wiseman/Downloads/Test/TeensyProjects.zip
+
+ps: ARDOP2 is not supported by upstream anymore, so use ARDOP1.

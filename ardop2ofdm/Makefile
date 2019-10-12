@@ -10,6 +10,11 @@ all: ardopofdm
 ardopofdm: $(OBJS)
 	gcc $(OBJS) -Xlinker -Map=output.map -lrt -lm -lpthread -lasound -o ardopofdm
 
+install: ardopofdm
+	install ardopofdm $(PREFIX)/bin
+	ln -sf $(PREFIX)/bin/ardopofdm $(PREFIX)/bin/ardop
+	install ../initscripts/ardop.service /etc/systemd/system
+
 -include *.d
 
 clean :
