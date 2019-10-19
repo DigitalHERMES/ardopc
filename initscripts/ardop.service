@@ -10,6 +10,7 @@ IgnoreSIGPIPE=no
 #StandardError=null
 StandardOutput=syslog
 StandardError=syslog
+Nice=-11
 
 [Install]
 WantedBy=multi-user.target

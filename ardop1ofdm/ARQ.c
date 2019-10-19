@@ -463,8 +463,8 @@ BOOL GetNextARQFrame()
 	}
 	// Handles a timeout from an ARQ connected State
 
-        // if (ProtocolState == ISS || ProtocolState == IDLE || ProtocolState == IRS || ProtocolState == IRStoISS)
-        if (ProtocolState == IDLE || ProtocolState == IRStoISS)
+        if (ProtocolState == ISS || ProtocolState == IDLE || ProtocolState == IRS || ProtocolState == IRStoISS)
+//        if (ProtocolState == IDLE || ProtocolState == IRStoISS)
         {
             if ((Now - dttTimeoutTrip) / 1000 > ARQTimeout) // (Handles protocol rule 1.7)
             {
