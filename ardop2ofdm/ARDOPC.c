@@ -15,7 +15,7 @@
 #include "Version.h"
 
 #include "ARDOPC.h"
-#include "getopt.h"
+#include <getopt.h>
 
 void CompressCallsign(char * Callsign, UCHAR * Compressed);
 void CompressGridSquare(char * Square, UCHAR * Compressed);
