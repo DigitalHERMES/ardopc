@@ -148,6 +148,7 @@ void Mod4FSKDataAndPlay(unsigned char * bytEncodedBytes, int Len, int intLeaderL
 		return;
 
 	WriteDebugLog(LOGDEBUG, "Sending Frame Type %s", strType);
+	DrawTXFrame(strType);
 
 	if (bytEncodedBytes[0] == PktFrameHeader)
 	{
@@ -420,6 +421,7 @@ void ModPSKDataAndPlay(unsigned char * bytEncodedBytes, int Len, int intLeaderLe
 	}
 	
 	WriteDebugLog(LOGDEBUG, "Sending Frame Type %s", strType);
+	DrawTXFrame(strType);
 
 	if (intNumCar == 1)
 		initFilter(200,1500);

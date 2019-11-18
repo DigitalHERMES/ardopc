@@ -8,10 +8,48 @@
 #endif
 #define CONST const	// for building sample arrays
 
-#define ProductName "ARDOP TNC"
-#define ProductVersion "2.0.3.31-BPQ-OFDM"
+extern const char ProductName[];
+extern const char ProductVersion[];
 
 //#define USE_SOUNDMODEM
+
+#define UseGUI			// Enable GUI Front End Support
+
+#ifndef TEENSY
+#ifdef UseGUI
+
+// Constellation and Waterfall for GUI interface
+
+#define PLOTCONSTELLATION
+#define PLOTWATERFALL
+#define PLOTSPECTRUM
+#define ConstellationHeight 90
+#define ConstellationWidth 90
+#define WaterfallWidth 205
+#define WaterfallHeight 64
+#define SpectrumWidth 205
+#define SpectrumHeight 64
+
+#define PLOTRADIUS 42
+#define WHITE 0
+#define Tomato 1
+#define Gold 2
+#define Lime 3	
+#define Yellow 4
+#define Orange 5
+#define Khaki 6
+#define Cyan 7
+#define DeepSkyBlue 8
+#define RoyalBlue 9
+#define Navy 10
+#define Black 11 
+#define Goldenrod 12
+#define Fuchsia 13
+
+#endif
+#endif
+
+
 
 //	Sound interface buffer size
 
@@ -115,9 +153,10 @@ typedef unsigned char UCHAR;
 #define IRSLED LED1
 #define TRAFFICLED LED2
 #else
-#define ISSLED 0
-#define IRSLED 0
-#define TRAFFICLED 0
+#define ISSLED 1
+#define IRSLED 2
+#define TRAFFICLED 3
+#define PKTLED 4
 #endif
 
 BOOL KeyPTT(BOOL State);
@@ -255,6 +294,17 @@ VOID EncodeAndSendOFDMACK(UCHAR bytSessionID, int LeaderLength);
 int ProcessOFDMAck(int AckType);
 void ProcessOFDMNak(int AckType);
 
+int SendtoGUI(char Type, unsigned char * Msg, int Len);	
+void DrawRXFrame(int State, const char * Frame);
+void DrawTXFrame(const char * Frame);
+void mySetPixel(unsigned char x, unsigned char y, unsigned int Colour);
+void clearDisplay();
+void DrawDecode(char * Decode);
+
+
+extern int WaterfallActive;
+extern int SpectrumActive;
+extern unsigned int PKTLEDTimer;
 
 extern char stcLastPingstrSender[10];
 extern char stcLastPingstrTarget[10];
@@ -587,6 +637,8 @@ extern int MaxCorrections;
 
 // Stats counters
 
+extern int SessBytesSent;
+extern int SessBytesReceived;
 extern int intLeaderDetects;
 extern int intLeaderSyncs;
 extern int intAccumLeaderTracking;

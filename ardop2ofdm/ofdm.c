@@ -310,9 +310,12 @@ int ProcessOFDMAck(int AckType)
 	int bytesacked = 0;		
 	int AckedPercent;
 	int Acked = 0;
+	char Display[64] = "";
 
 	if (AckType == OFDMACK)
 	{
+		strcpy(Display, "OFDMACK ");
+
 		// Get acked frame bitmask from message
 
 		for (i = 5; i >= 0; i--)
@@ -340,6 +343,7 @@ int ProcessOFDMAck(int AckType)
 		{
 			CarriersACKed++;
 			Acked++;
+			strcat(Display, "1");
 			OFDMCarriersAcked[OFDMMode] ++;
 		
 			if (UnackedOFDMBlocks[SentOFDMBlocks[i]])		// Not Aleady acked?
@@ -348,10 +352,25 @@ int ProcessOFDMAck(int AckType)
 			}
 		}
 		else
+		{
 			CarriersNAKed++;
-
+			strcat(Display, "0");
+		}
 		ackbits >>=1;
 	}
+
+	if (AckType == OFDMACK)
+	{
+		if (CarriersSent > 12)
+			sprintf(Display, "OFDMACK %d/%d", Acked, CarriersSent);
+	
+		DrawRXFrame(1, Display);
+	}
+	else if (AckType == DataACK)
+		DrawRXFrame(1, "DataACK");
+		
+	else if (AckType == DataACKHiQ)
+		DrawRXFrame(1, "DataACKHiQ");
 
 	AckedPercent = (CarriersACKed * 100) / (CarriersACKed + CarriersNAKed) ;
 
@@ -925,6 +944,7 @@ VOID InitDemodOFDM()
 	int OFDMType[MAXCAR] = {0};
 	int ModeCount[8] = {0};
 	int MaxModeCount = 0;
+	char Msg[64];
 
 	intSampPerSym = 240;
 
@@ -1042,7 +1062,6 @@ VOID InitDemodOFDM()
 		}
 	}
 
-
 	GetOFDMFrameInfo(RXOFDMMode, &intDataLen, &intRSLen, &intPSKMode, &intSymbolsPerByte);
 
 	// if OFDM mode (or frame type) has changed clear any received but unprocessed data
@@ -1080,6 +1099,8 @@ VOID InitDemodOFDM()
 
 	WriteDebugLog(LOGDEBUG, "OFDM Mode %s", OFDMModes[RXOFDMMode]);
 
+	sprintf(Msg, "%s/%s", Name(intFrameType), OFDMModes[RXOFDMMode]);
+	DrawRXFrame(0, Msg);
 }
 
 VOID Decode1CarOFDM(int Carrier)
@@ -1516,7 +1537,8 @@ void ModOFDMDataAndPlay(unsigned char * bytEncodedBytes, int Len, int intLeaderL
 	int OFDMFrame[240] = {0};	// accumulated samples for each carrier
 	short OFDMSamples[240];		// 216 data, 24 CP
 	int p, q;					// start at 24, copy CP later
- 
+	char Msg[64];
+
 	if (!FrameInfo(Type, &blnOdd, &intNumCar, strMod, &intBaud, &intDataLen, &intRSLen, &bytMinQualThresh, strType))
 		return;
 
@@ -1568,6 +1590,9 @@ void ModOFDMDataAndPlay(unsigned char * bytEncodedBytes, int Len, int intLeaderL
 	}
 	
 	WriteDebugLog(LOGDEBUG, "Sending Frame Type %s Mode %s", strType, OFDMModes[OFDMMode]);
+
+	sprintf(Msg, "%s/%s", strType, OFDMModes[OFDMMode]);
+	DrawTXFrame(Msg);
 
 	if (intNumCar == 9)
 	{

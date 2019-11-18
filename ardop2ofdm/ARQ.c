@@ -57,7 +57,7 @@ UCHAR bytLastARQDataFrameAcked = 0;  // initialize to an improper data frame
 void ClearTuningStats();
 void ClearQualityStats();
 void updateDisplay();
-void DrawTXMode(char * TXMode);
+void DrawTXMode(const char * TXMode);
 
 int bytQDataInProcessLen = 0;		// Lenght of frame to send/last sent
 
@@ -528,7 +528,7 @@ BOOL GetNextARQFrame()
 	}
 	// Handles a timeout from an ARQ connected State
 
-	if (ProtocolState == IDLE || ProtocolState == IRStoISS)
+	if (ProtocolState == ISS || ProtocolState == IDLE || ProtocolState == IRS || ProtocolState == IRStoISS)
 	{
 		if ((Now - dttTimeoutTrip) / 1000 > ARQTimeout) // (Handles protocol rule 1.7)
 		{
@@ -1323,9 +1323,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				QueueCommandToHost(HostCmd);
 
 				bytDataToSendLength = 0;		// Clear queue
-#ifdef TEENSY
 				SetLED(TRAFFICLED, FALSE);
-#endif
 				blnPending = TRUE;				
 				blnEnbARQRpt = FALSE;
 
@@ -1683,6 +1681,9 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				if (intFrameType != intLastARQDataFrameToHost) // protects against duplicates if ISS missed IRS's ACK and repeated the same frame  
 				{
 					AddTagToDataAndSendToHost(bytData, "ARQ", DataLen); // only correct data in proper squence passed to host   
+					
+					SessBytesReceived += DataLen;
+
 					intLastARQDataFrameToHost = intFrameType;
 					dttTimeoutTrip = Now;
 				}
@@ -2392,9 +2393,7 @@ BOOL SendARQConnectRequest(char * strMycall, char * strTargetCall)
 	bytDataToSendLength = 0;
 	FreeSemaphore();
 
-#ifdef TEENSY
 	SetLED(TRAFFICLED, FALSE);
-#endif
 
 	GetNAKLoQLevels(atoi(ARQBandwidths[ARQBandwidth]));
 	GetACKHiQLevels(atoi(ARQBandwidths[ARQBandwidth]));
@@ -2572,6 +2571,9 @@ void ClearTuningStats()
 
 void ClearQualityStats()
 {
+	SessBytesSent = 0;
+	SessBytesReceived = 0;
+
 	int4FSKQuality = 0;
     int4FSKQualityCnts = 0;
     int8FSKQuality = 0;
@@ -2612,6 +2614,10 @@ void LogStats()
 	Statsprintf("     AvgCorrelationMax:MaxProd= %f over %d  correlations", dblAvgCorMaxToMaxProduct, intEnvelopeCors);
 	Statsprintf("     FrameSyncs=%d  Good Frame Type Decodes=%d  Failed Frame Type Decodes =%d Timeouts =%d", intFrameSyncs, intGoodFSKFrameTypes, intFailedFSKFrameTypes, intTimeouts);
 	Statsprintf("     Avg Frame Type decode distance= %f over %d decodes", dblAvgDecodeDistance, intDecodeDistanceCount);
+
+	Statsprintf(" ");
+	Statsprintf("Bytes Sent %5d Bytes Received %5d", SessBytesSent, SessBytesReceived);
+	Statsprintf(" ");
 
 	if (intGoodFSKFrameDataDecodes + intFailedFSKFrameDataDecodes + intGoodFSKSummationDecodes > 0)
 	{

@@ -12,6 +12,7 @@
 #define closesocket close
 #endif
 
+#include "Version.h"
 
 #include "ARDOPC.h"
 #include "getopt.h"
@@ -44,6 +45,7 @@ char Callsign[10] = "";
 BOOL wantCWID = FALSE;
 BOOL CWOnOff = FALSE;
 BOOL NeedID = FALSE;		// SENDID Command Flag
+BOOL NeedCWID = FALSE;
 BOOL NeedConReq = FALSE;	// ARQCALL Command Flag
 BOOL NeedPing = FALSE;		// PING Command Flag
 BOOL NeedCQ = FALSE;		// PING Command Flag
@@ -52,11 +54,21 @@ BOOL UseKISS = TRUE;			// Enable Packet (KISS) interface
 int PingCount;
 int CQCount;
 
+#ifdef TEENSY
+int WaterfallActive = 0;		// Waterfall display off
+int SpectrumActive = 0;			// Spectrum display off
+#else
+int WaterfallActive = 1;		// Waterfall display on
+int SpectrumActive = 0;			// Spectrum display off
+#endif
+
+
 BOOL blnPINGrepeating = False;
 BOOL blnFramePending = False;	//  Cancels last repeat
 int intPINGRepeats = 0;
 
 char ConnectToCall[16] = "";
+
 
 #ifdef TEENSY
 int LeaderLength = 500;
@@ -99,6 +111,7 @@ BOOL gotGPIO = FALSE;
 BOOL useGPIO = FALSE;
 
 int pttGPIOPin = -1;
+BOOL pttGPIOInvert = FALSE;
 
 HANDLE hCATDevice = 0;	
 char CATPort[80] = "";			// Port for CAT.
@@ -121,6 +134,8 @@ int PTTMode = PTTRTS;				// PTT Control Flags.
 
 //    Public Structure QualityStats
   
+int SessBytesSent;
+int SessBytesReceived;
 int int4FSKQuality;
 int int4FSKQualityCnts;
 int int8FSKQuality;
@@ -2057,9 +2072,8 @@ void ClearDataToSend()
 	bytDataToSendLength = 0;
 	FreeSemaphore();
 
-#ifdef TEENSY
 	SetLED(TRAFFICLED, FALSE);
-#endif
+
 	QueueCommandToHost("BUFFER 0");
 }
 
@@ -2105,10 +2119,8 @@ void RemoveDataFromQueue(int Len)
 
 	FreeSemaphore();
 
-#ifdef TEENSY
 	if (bytDataToSendLength == 0)
 		SetLED(TRAFFICLED, FALSE);
-#endif		
 
 	sprintf(HostCmd, "BUFFER %d", bytDataToSendLength);
 	QueueCommandToHost(HostCmd);
@@ -2561,6 +2573,204 @@ BOOL BusyDetect(float * dblMag, int intStart, int intStop)
  		
 int LastBusyCheck = 0;
 
+extern UCHAR CurrentLevel;
+
+#ifdef PLOTSPECTRUM		
+float dblMagSpectrum[206];
+float dblMaxScale = 0.0f;
+extern UCHAR Pixels[4096];
+extern UCHAR * pixelPointer;
+#endif
+
+void UpdateBusyDetector(short * bytNewSamples)
+{
+	float dblReF[1024];
+	float dblImF[1024];
+	float dblMag[206];
+#ifdef PLOTSPECTRUM
+	float dblMagMax = 0.0000000001f;
+	float dblMagMin = 10000000000.0f;
+#endif
+	UCHAR Waterfall[256];			// Colour index values to send to GUI
+	int clrTLC = Lime;				// Default Bandwidth lines on waterfall
+	
+	static BOOL blnLastBusyStatus;
+	
+	float dblMagAvg = 0;
+	int intTuneLineLow, intTuneLineHi, intDelta;
+	int i;
+
+//	if (State != SearchingForLeader)
+//		return;						// only when looking for leader
+
+	if (ProtocolState != DISC)		// ' Only process busy when in DISC state
+	{
+		// Dont do busy, but may need waterfall or spectrum
+
+		if ((WaterfallActive | SpectrumActive) == 0)
+			return;					// No waterfall or spectrum 
+	}
+
+	if (Now - LastBusyCheck < 100)
+		return;
+
+	LastBusyCheck = Now;
+
+	FourierTransform(1024, bytNewSamples, &dblReF[0], &dblImF[0], FALSE);
+
+	for (i = 0; i <  206; i++)
+	{
+		//	starting at ~300 Hz to ~2700 Hz Which puts the center of the signal in the center of the window (~1500Hz)
+            
+		dblMag[i] = powf(dblReF[i + 25], 2) + powf(dblImF[i + 25], 2);	 // first pass 
+		dblMagAvg += dblMag[i];
+#ifdef PLOTSPECTRUM		
+		dblMagSpectrum[i] = 0.2f * dblMag[i] + 0.8f * dblMagSpectrum[i];	
+		dblMagMax = max(dblMagMax, dblMagSpectrum[i]);
+		dblMagMin = min(dblMagMin, dblMagSpectrum[i]);
+#endif
+	}
+
+//	LookforPacket(dblMag, dblMagAvg, 206, &dblReF[25], &dblImF[25]);
+//	packet_process_samples(bytNewSamples, 1200);
+
+	intDelta = round((ExtractARQBandwidth() / 2 + TuningRange) / 11.719f);
+
+	intTuneLineLow = max((103 - intDelta), 3);
+	intTuneLineHi = min((103 + intDelta), 203);
+    
+	if (ProtocolState == DISC)		// ' Only process busy when in DISC state
+	{
+		blnBusyStatus = BusyDetect3(dblMag, intTuneLineLow, intTuneLineHi);
+		
+		if (blnBusyStatus && !blnLastBusyStatus)
+		{
+			QueueCommandToHost("BUSY TRUE");
+         	newStatus = TRUE;				// report to PTC
+
+			if (!WaterfallActive && !SpectrumActive)
+			{
+				UCHAR Msg[2];
+
+				Msg[0] = blnBusyStatus;
+				SendtoGUI('B', Msg, 1);
+			}	    
+		}
+		//    stcStatus.Text = "True"
+            //    queTNCStatus.Enqueue(stcStatus)
+            //    'Debug.WriteLine("BUSY TRUE @ " & Format(DateTime.UtcNow, "HH:mm:ss"))
+			
+		else if (blnLastBusyStatus && !blnBusyStatus)
+		{
+			QueueCommandToHost("BUSY FALSE");
+			newStatus = TRUE;				// report to PTC
+
+			if (!WaterfallActive && !SpectrumActive)
+			{
+				UCHAR Msg[2];
+
+				Msg[0] = blnBusyStatus;
+				SendtoGUI('B', Msg, 1);
+			}	    
+		} 
+		//    stcStatus.Text = "False"
+        //    queTNCStatus.Enqueue(stcStatus)
+        //    'Debug.WriteLine("BUSY FALSE @ " & Format(DateTime.UtcNow, "HH:mm:ss"))
+
+		blnLastBusyStatus = blnBusyStatus;
+	}
+	
+	if (BusyDet == 0) 
+		clrTLC = Goldenrod;
+	else if (blnBusyStatus)
+		clrTLC = Fuchsia;
+
+	// At the moment we only get here what seaching for leader,
+	// but if we want to plot spectrum we should call
+	// it always
+
+
+
+	if (WaterfallActive)
+	{
+#ifdef PLOTWATERFALL
+		dblMagAvg = log10f(dblMagAvg / 5000.0f);
+	
+		for (i = 0; i < 206; i++)
+		{
+			// The following provides some AGC over the waterfall to compensate for avg input level.
+        
+			float y1 = (0.25f + 2.5f / dblMagAvg) * log10f(0.01 + dblMag[i]);
+			int objColor;
+
+			// Set the pixel color based on the intensity (log) of the spectral line
+			if (y1 > 6.5)
+				objColor = Orange; // Strongest spectral line 
+			else if (y1 > 6)
+				objColor = Khaki;
+			else if (y1 > 5.5)
+				objColor = Cyan;
+			else if (y1 > 5)
+				objColor = DeepSkyBlue;
+			else if (y1 > 4.5)
+				objColor = RoyalBlue;
+			else if (y1 > 4)
+				objColor = Navy;
+			else
+				objColor = Black;
+		
+			if (i == 102)
+				Waterfall[i] =  Tomato;  // 1500 Hz line (center)
+			else if (i == intTuneLineLow || i == intTuneLineLow - 1 || i == intTuneLineHi || i == intTuneLineHi + 1)
+				Waterfall[i] = clrTLC;
+			else
+				Waterfall[i] = objColor; // ' Else plot the pixel as received
+		}
+
+		// Send Signal level and Busy indicator to save extra packets
+
+		Waterfall[206] = CurrentLevel;
+		Waterfall[207] = blnBusyStatus;
+
+		SendtoGUI('W', Waterfall, 208);
+#endif
+	}
+	else if (SpectrumActive)
+	{
+#ifdef PLOTSPECTRUM
+		// This performs an auto scaling mechansim with fast attack and slow release
+        if (dblMagMin / dblMagMax < 0.0001) // more than 10000:1 difference Max:Min
+            dblMaxScale = max(dblMagMax, dblMaxScale * 0.9f);
+		else
+            dblMaxScale = max(10000 * dblMagMin, dblMagMax);
+   
+		clearDisplay();
+	
+		for (i = 0; i < 206; i++)
+		{
+		// The following provides some AGC over the spectrum to compensate for avg input level.
+        
+			float y1 = -0.25f * (SpectrumHeight - 1) *  log10f((max(dblMagSpectrum[i], dblMaxScale / 10000)) / dblMaxScale); // ' range should be 0 to bmpSpectrumHeight -1
+			int objColor  = Yellow;
+
+			Waterfall[i] = round(y1);
+		}
+         
+		// Send Signal level and Busy indicator to save extra packets
+
+		Waterfall[206] = CurrentLevel;
+		Waterfall[207] = blnBusyStatus;
+		Waterfall[208] = intTuneLineLow;
+		Waterfall[209] = intTuneLineHi;
+
+		SendtoGUI('X', Waterfall, 210);
+#endif
+	}
+}
+
+
+/* Old Version pre gui
+
 void UpdateBusyDetector(short * bytNewSamples)
 {
 	float dblReF[1024];
@@ -2629,6 +2839,7 @@ void UpdateBusyDetector(short * bytNewSamples)
 	}
 }
 
+*/
 void SendCQ(int intRpt)
 {   	
 	EncLen = EncodeCQ(Callsign, GridSquare, bytEncodedBytes);
@@ -2769,8 +2980,13 @@ unsigned short int compute_crc(unsigned char *buf,int len)
 	return fcs;
 }
 
+extern BOOL UseLeft;
+extern BOOL UseRight;
+extern char LogDir[256];
+
 static struct option long_options[] =
 {
+	{"logdir",  required_argument, 0 , 'l'},
 	{"ptt",  required_argument, 0 , 'p'},
 	{"cat",  required_argument, 0 , 'c'},
 	{"keystring",  required_argument, 0 , 'k'},
@@ -2791,10 +3007,15 @@ char HelpScreen[] =
 	"  On Linux the program will create a pty and symlink it to the specified name.\n"
 	"\n"
 	"Optional Paramters\n"
+	"-l path or --logdir path          Path for log files\n"
 	"-c device or --cat device         Device to use for CAT Control\n"
 	"-p device or --ptt device         Device to use for PTT control using RTS\n"
+	"-g [Pin]                          GPIO pin to use for PTT (ARM Only)\n"
+	"                                  Default 17. use -Pin to invert PTT state\n"
 	"-k string or --keystring string   String (In HEX) to send to the radio to key PTT\n"
 	"-u string or --unkeystring string String (In HEX) to send to the radio to unkeykey PTT\n"
+	"-L use Left Channel of Soundcard in stereo mode\n"
+	"-R use Right Channel of Soundcard in stereo mode\n"
 	"\n"
 	" CAT and RTS PTT can share the same port.\n"
 	" See the ardop documentation for more information on cat and ptt options\n"
@@ -2811,7 +3032,7 @@ VOID processargs(int argc, char * argv[])
 	{		
 		int option_index = 0;
 
-		c = getopt_long(argc, argv, "c:p:g::k:u:h", long_options, &option_index);
+		c = getopt_long(argc, argv, "l:c:p:g::k:u:hLR", long_options, &option_index);
 
 		// Check for end of operation or error
 		if (c == -1)
@@ -2825,6 +3046,11 @@ VOID processargs(int argc, char * argv[])
 			printf("ARDOPC Version %s\n", ProductVersion);
 			printf ("%s", HelpScreen);
 			exit(0);
+
+		case 'l':
+			strcpy(LogDir, optarg);
+			break;
+
 			
 		case 'g':
 			if (optarg)
@@ -2895,6 +3121,16 @@ VOID processargs(int argc, char * argv[])
 
 		case 'c':
 			strcpy(CATPort, optarg);
+			break;
+
+		case 'L':
+			UseLeft = 1;
+			UseRight = 0;
+			break;
+
+		case 'R':
+			UseLeft = 0;
+			UseRight = 1;
 			break;
 
 		case '?':

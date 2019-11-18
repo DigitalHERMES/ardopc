@@ -92,12 +92,12 @@ void AddDataToDataToSend(UCHAR * bytNewData, int Len)
 
 	memcpy(&bytDataToSend[bytDataToSendLength], bytNewData, Len);
 	bytDataToSendLength += Len;
+	SessBytesSent += Len;
 
 	FreeSemaphore();
 
-#ifdef TEENSY
 	SetLED(TRAFFICLED, TRUE);
-#endif
+
 	sprintf(HostCmd, "BUFFER %d", bytDataToSendLength);
 	QueueCommandToHost(HostCmd);
 }
