@@ -1,0 +1,28 @@
+18:02:41.370 ARDOPC Version 2.0.3.31-BPQ-OFDM
+18:02:41.370 ARDOPC listening on port 8515
+18:02:41.370 getReadDevices
+18:02:42.443 Card 0, ID `PCH', name `HDA Intel PCH'
+18:02:42.443   Device 0, ID `ALC3202 Analog', name `ALC3202 Analog', 1 subdevices (1 available)
+18:02:42.443     2 channels, 
+18:02:42.443 sampling rate 44100..192000 Hz
+18:02:42.443 hw:0,0 ALC3202 Analog(HDA Intel PCH)
+18:02:42.443 getWriteDevices
+18:02:42.444 Card 0, ID `PCH', name `HDA Intel PCH'
+18:02:42.444   Device 0, ID `ALC3202 Analog', name `ALC3202 Analog', 1 subdevices (1 available)
+18:02:42.444     2..4 channels, 
+18:02:42.444 sampling rate 44100..192000 Hz
+18:02:42.444 hw:0,0 ALC3202 Analog(HDA Intel PCH)
+18:02:42.444   Device 3, ID `HDMI 0', name `HDMI 0', 1 subdevices (1 available)
+18:02:42.445     2..8 channels, 
+18:02:42.445 sampling rate 32000..192000 Hz
+18:02:42.445 hw:0,3 HDMI 0(HDA Intel PCH)
+18:02:42.445   Device 7, ID `HDMI 1', name `HDMI 1', 1 subdevices (1 available)
+18:02:42.445     2..8 channels, 
+18:02:42.445 sampling rate 32000..192000 Hz
+18:02:42.445 hw:0,7 HDMI 1(HDA Intel PCH)
+18:02:42.445   Device 8, ID `HDMI 2', name `HDMI 2', 1 subdevices (1 available)
+18:02:42.445     2..8 channels, 
+18:02:42.445 sampling rate 32000..192000 Hz
+18:02:42.445 hw:0,8 HDMI 2(HDA Intel PCH)
+18:02:42.445 Opening Playback Device ARDOP Rate 12000
+18:02:42.446 ARDOPC listening on port 8515
