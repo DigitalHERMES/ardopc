@@ -441,6 +441,10 @@ extern struct SEM Semaphore;
 
 #define DOFDM_500_55_E		0x24
 #define DOFDM_500_55_O		0x25
+
+#define DOFDM_200_55_E		0x26
+#define DOFDM_200_55_O		0x27
+
 #define OConReq500	0x18
 #define OConReq2500	0x19
 
@@ -752,8 +756,15 @@ BOOL EncodeARQConRequest(char * strMyCallsign, char * strTargetCallsign, enum _A
 #define QAM16	3
 #define PSK16	4			// Experimental - is it better than 16QAM?
 #define QAM32	5
+#define PSK4S	6			// Special shorter frame for short messages
 
-BOOL OFDMMode;				// OFDM can use various modulation modes and redundancy levels
+extern int OFDMMode;			// OFDM can use various modulation modes and redundancy levels
+extern int LastSentOFDMMode;	// For retries
+extern int LastSentOFDMType;	// For retries
+
+extern int SavedOFDMMode;		// used if we switch to a more robust mode cos we don't have much to send
+extern int SavedFrameType;
+
 
 extern const char OFDMModes[8][6];
 

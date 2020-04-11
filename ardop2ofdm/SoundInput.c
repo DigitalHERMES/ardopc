@@ -3645,6 +3645,7 @@ void DemodulateFrame(int intFrameType)
 			DemodQAM();
 			break;
 
+		case DOFDM_200_55_E:
 		case DOFDM_500_55_E:
 		case DOFDM_2500_55_E:
 
@@ -3913,6 +3914,7 @@ BOOL DecodeFrame(int xxx, UCHAR * bytData)
 				DrawRXFrame(1, Name(intFrameType));
 			break;
 
+		case DOFDM_200_55_E:
 		case DOFDM_500_55_E:
 		case DOFDM_2500_55_E:
 

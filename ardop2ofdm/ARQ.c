@@ -32,18 +32,20 @@ extern BOOL blnFramePending;
 extern int dttLastBusyTrip;
 extern int dttPriorLastBusyTrip;
 extern int dttLastBusyClear;
-extern const char Good[MAXCAR];
-extern int intNumCar;
-
-extern UCHAR goodReceivedBlocks[128];
-extern UCHAR goodReceivedBlockLen[128];
-extern int BytesSenttoHost;
 
 extern int OFDMCarriersReceived[8];
 extern int OFDMCarriersDecoded[8];
 
 extern int OFDMCarriersAcked[8];
 extern int OFDMCarriersNaked[8];
+
+extern const char Good[MAXCAR];
+extern int intNumCar;
+
+extern UCHAR goodReceivedBlocks[128];
+extern UCHAR goodReceivedBlockLen[128];
+extern int BytesSenttoHost;
+extern int BytesSent;							// OFDM Sent but not acked
 
 int intLastFrameIDToHost = 0;
 int	intLastFailedFrameID = 0;
@@ -141,6 +143,8 @@ int intACKctr = 0;
 UCHAR bytLastACKedDataFrameType;
 int bytLastACKedDataFrameLen;
 
+int IdleCount = 0;
+
 int EncodeConACKwTiming(UCHAR bytFrameType, int intRcvdLeaderLenMs, UCHAR bytSessionID, UCHAR * bytreturn);
 int IRSNegotiateBW(int intConReqFrameType);
 int GetNextFrameData(int * intUpDn, UCHAR * bytFrameTypeToSend, UCHAR * strMod, BOOL blnInitialize);
@@ -153,6 +157,7 @@ void LogStats();
 int ComputeInterFrameInterval(int intRequestedIntervalMS);
 BOOL CheckForDisconnect();
 BOOL IsConReqFrame(UCHAR bytType);
+void PlatformSleep(int mS);
 
 // Tuning Stats
 
@@ -365,6 +370,7 @@ void SetARDOPProtocolState(int value)
 		ClearDataToSend();
 		SetLED(ISSLED, FALSE);
 		SetLED(IRSLED, FALSE);
+		displayCall(0x20, "");
 
 		break;
 
@@ -683,7 +689,7 @@ static UCHAR DataModes200[] = {D4PSK_200_50_E, D4PSK_200_100_E, D16QAM_200_100_E
  
 static UCHAR DataModes500[] = {D4FSK_500_50_E, D4PSK_500_50_E, D16QAMR_500_100_E, D16QAM_500_100_E};
 
-static UCHAR DataModes500OFDM[] = {D4FSK_500_50_E, D4PSK_500_50_E, DOFDM_500_55_E};
+static UCHAR DataModes500OFDM[] = {D4FSK_500_50_E, DOFDM_200_55_E, DOFDM_500_55_E};
 
 static UCHAR DataModes500FSK[] = {D4FSK_500_50_E};
 
@@ -936,15 +942,75 @@ void SendData()
 
 	// Check for ID frame required (every 10 minutes)
 	
+
 	if (blnDISCRepeating)
 		return;
 	
 	switch (ProtocolState)
 	{
+
+	// I now actively repeat IDLE instead of using timeout to resend
+
 	case IDLE:
 
-		WriteDebugLog(LOGDEBUG, "[ARDOPProtocol.SendData] Sending Data from IDLE state! Exit SendData");
-		return;
+		// if data to send switch to ISS
+
+		if (bytDataToSendLength > 0)	 // If ACK and Data to send
+		{
+			WriteDebugLog(LOGDEBUG, "[ARDOPprotocol.ProcessedRcvdARQFrame] Protocol state IDLE with data available. Go to ISS Data state.");
+			
+			SetARDOPProtocolState(ISS);
+			ARQState = ISSData;
+		
+			// Drop through to send the data
+		}
+		else
+		{
+			int SleepLen = 0;
+
+			blnEnbARQRpt = TRUE;			
+			blnLastFrameSentData = FALSE;
+
+			// This is setting the repeat after timeout time, not the normal interval after an ack
+
+			intFrameRepeatInterval = ComputeInterFrameInterval(1500);
+	
+			WriteDebugLog(LOGDEBUG, "[ARDOPprotocol.SendData] Continue sending IDLE");
+	
+			IdleCount++;			// Try to detect interactive session and slow down idle/ack sequence 
+
+			if (IdleCount > 5)		// Probably interactive session
+				SleepLen = 2000;
+
+			while (SleepLen > 0)
+			{
+				SleepLen -= 50;
+
+				PlatformSleep(50);
+		
+				// May now have something to send
+		
+				if (bytDataToSendLength > 0)	 // If ACK and Data to send
+					break;
+			}
+
+			// May now have something to send
+		
+			if (bytDataToSendLength > 0)	 // If ACK and Data to send
+			{
+				WriteDebugLog(LOGDEBUG, "[ARDOPprotocol.ProcessedRcvdARQFrame] Protocol state IDLE with data available. Go to ISS Data state.");
+			
+				SetARDOPProtocolState(ISS);
+				ARQState = ISSData;
+		
+				// Drop through to send the data
+			}
+			else
+			{
+				EncodeAndSend4FSKControl(IDLEFRAME, bytSessionID, LeaderLength); // only returns when all sent
+  				return;
+			}
+		}
 
 	case ISS:
 			
@@ -957,6 +1023,7 @@ void SendData()
 		{
 			WriteDebugLog(LOGDEBUG, "[ARDOPprotocol.SendData] DataToSend = %d bytes, In ProtocolState ISS", bytDataToSendLength);
 
+			IdleCount = 0;
 			//' Get the data from the buffer here based on current data frame type
 			//' (Handles protocol Rule 2.1)
 
@@ -1001,8 +1068,63 @@ void SendData()
 			}
 			else if (strcmp(strMod, "OFDM") == 0)
 			{
+				int MaxRobust = 12 * 9;			// 500 4PSKS
+
+				// bytDataToSendLength is data still queued. BytesSent is unacked data
+
+				// Mustn't change mode if data outstanding
+/*
+	
+				if (BytesSent == 0)
+				{
+					// Restore Previous mode
+
+					if (SavedOFDMMode != -1)
+					{
+						OFDMMode = SavedOFDMMode;
+						bytCurrentFrameType = SavedFrameType;
+						SavedOFDMMode = -1;
+					}
+
+					// if all can be sent in most robust mode, use it
+				
+					LastSentOFDMType = bytCurrentFrameType;
+
+					if ((bytCurrentFrameType & 0xFE) == DOFDM_200_55_E)
+					{
+						// If in 200 only try 200 2PSK
+					
+						MaxRobust = 19 * 3;			// 200 2PSK
+						
+						if (bytDataToSendLength <= MaxRobust)	
+						{
+							SavedOFDMMode = OFDMMode;
+	
+							// Dont need to change type
+						
+							OFDMMode = PSK2;
+						}
+					}
+					else
+					{
+						// 500 or 2500. Use short 500 frame
+	
+						if (bytDataToSendLength <= MaxRobust)	
+						{
+							SavedOFDMMode = OFDMMode;
+							SavedFrameType = bytCurrentFrameType;
+							OFDMMode = PSK4S;
+							bytCurrentFrameType = (bytCurrentFrameType & 1) | DOFDM_500_55_E;	//Keep Toggle
+						}
+					}
+				}
+*/
 				EncLen = EncodeOFDMData(bytCurrentFrameType, bytDataToSend, bytDataToSendLength, bytEncodedBytes);
 				ModOFDMDataAndPlay(bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
+				LastSentOFDMMode = OFDMMode;
+
+				// If we've used a more reoust mode we mustn't shift back until all acked
+
 			}
 			else		// This handles PSK and QAM
 			{
@@ -1806,9 +1928,11 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				}
 				else
 				{
-					// Data Ack with nothing to send. Let timeout repeat IDLE
+					// ACK with no data.
 
-					intTimeouts--;			// We didn't really timeout
+					SetARDOPProtocolState(IDLE);
+					ARQState = ISSData;
+					SendData(FALSE);		// Will send IDLE as no data
 					return;
 				}
 			}

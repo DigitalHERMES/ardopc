@@ -32,7 +32,7 @@ void SerialHostPoll();
 void TCPHostPoll();
 BOOL MainPoll();
 VOID PacketStartTX();
-void PlatformSleep();
+void PlatformSleep(int mS);
 BOOL BusyDetect2(float * dblMag, int intStart, int intStop);
 BOOL IsPingToMe(char * strCallsign);
 void LookforPacket(float * dblMag, float dblMagAvg, int count, float * real, float * imag);
@@ -263,6 +263,8 @@ const UCHAR bytValidFrameTypesALL[]=
 	D16QAMR_500_100_O,
 	D16QAM_500_100_E,
 	D16QAM_500_100_O,
+	DOFDM_200_55_E,
+	DOFDM_200_55_O,
 	DOFDM_500_55_E,
 	DOFDM_500_55_O,
 	D4FSK_1000_50_E,
@@ -328,7 +330,7 @@ const char strAllDataModes[18][16] =
 		{"4PSK.200.50", "4PSK.200.100",
 		"16QAM.200.100", "4FSK.500.50", 
 		"4PSK.500.50", "4PSK.500.100",
-		"OFDM.500.55", 
+		"OFDM.200.55", "OFDM.500.55", 
 		"16QAMR.500.100", "16QAM.500.100",
 		"4FSK.1000.50", 
 		"4PSKR.2500.50", "4PSK.2500.50", 
@@ -406,8 +408,8 @@ const char strFrameType[64][18] =
 	"16QAM.500.100.O",
 	"OFDM.500.55.E",
 	"OFDM.500.55.O",
-	"",
-	"",
+	"OFDM.200.55.E",
+	"OFDM.200.55.O",
 
 	//	1 Khz Bandwidth Data Modes 
 	//	4 Car 4FSK Data mode 1000 Hz, 50 baud tones spaced @ 100 Hz 
@@ -498,8 +500,8 @@ const char shortFrameType[64][12] =
 	"16Q.500.100",
 	"OFDM.500",
 	"OFDM.500",
-	"",
-	"",
+	"OFDM.200",
+	"OFDM.200",
 
 	//	1 Khz Bandwidth Data Modes 
 	//	4 Car 4FSK Data mode 1000 Hz, 50 baud tones spaced @ 100 Hz 
@@ -713,7 +715,11 @@ void ardopmain()
 		else
 			TCPHostPoll();
 		MainPoll();
-		PlatformSleep();
+#ifdef Teensy
+		PlatformSleep(0);
+#else
+		PlatformSleep(10);
+#endif
 	}
 
 	if (!SerialMode)
@@ -946,6 +952,16 @@ BOOL FrameInfo(UCHAR bytFrameType, int * blnOdd, int * intNumCar, char * strMod,
 			*intRSLen = 40;
 			strcpy(strMod, "16QAM");
 			*intBaud = 100;
+			break;
+
+		case DOFDM_200_55_E:
+
+			*blnOdd = (1 & bytFrameType) != 0;
+			*intNumCar = 3;
+			*intDataLen = 40;
+			*intRSLen = 10;
+			strcpy(strMod, "OFDM");
+			*intBaud = 55;
 			break;
 
 		case DOFDM_500_55_E:

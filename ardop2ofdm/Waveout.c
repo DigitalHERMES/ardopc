@@ -321,13 +321,32 @@ void txSleep(int mS)
 {
 	// called while waiting for next TX buffer. Run background processes
 
+	while (mS > 50)
+	{
+		PollReceivedSamples();			// discard any received samples
+
+		if (SerialMode)
+			SerialHostPoll();
+		else
+			TCPHostPoll();
+
+		Sleep(50);
+		mS -= 50;
+	}
+
+	Sleep(mS);
+
 	PollReceivedSamples();			// discard any received samples
 	if (SerialMode)
 		SerialHostPoll();
 	else
 		TCPHostPoll();
 
-	Sleep(mS);
+	if (PKTLEDTimer && Now > PKTLEDTimer)
+    {
+      PKTLEDTimer = 0;
+      SetLED(PKTLED, 0);				// turn off packet rxed led
+    }
 }
 
 int PriorSize = 0;
@@ -869,11 +888,33 @@ BOOL KeyPTT(BOOL blnPTT)
 	return TRUE;
 }
 
-void PlatformSleep()
+void PlatformSleep(int mS)
 {
 	//	Sleep to avoid using all cpu
 
-	Sleep(10);
+	while (mS > 50)
+	{
+		if (SerialMode)
+			SerialHostPoll();
+		else
+			TCPHostPoll();
+
+		Sleep(50);
+		mS -= 50;
+	}
+
+	Sleep(mS);
+
+	if (SerialMode)
+		SerialHostPoll();
+	else
+		TCPHostPoll();
+
+	if (PKTLEDTimer && Now > PKTLEDTimer)
+    {
+      PKTLEDTimer = 0;
+      SetLED(PKTLED, 0);				// turn off packet rxed led
+    }
 }
 
 void displayState(const char * State)

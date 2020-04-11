@@ -16,7 +16,7 @@ We could send the same data (with same block number) on multiple carriers for re
 We need a ack frame with one bit per carrier (? 6 bytes) which is about 1 sec with 50 baud (do we need fec or just crc??).
 Could send ACK at 100 baud, shortening it a bit, but is overall throughput increace worth it?
 
-Using one byte block number but limit to 0 - 127. Window is 10160 in 16QAM
+Using one byte block number but limit to 0 - 127. Window is 10160 in 16QAM or 12700 for 32QAM
 unless we use a different block length for each mode. Takes 10% of 2FSK throughput.
 
 Receiver must be able to hold  window of frames (may be a problem with Teensy)
@@ -74,9 +74,20 @@ For Comparison 16QAM.2500.100
 #pragma warning(disable : 4244)		// Code does lots of float to int
 
 int OFDMMode;				// OFDM can use various modulation modes and redundancy levels
+int LastSentOFDMMode;		// For retries
+int LastSentOFDMType;		// For retries
+
+int SavedOFDMMode = -1;		// used if we switch to a more robust mode cos we don't have much to send
+int SavedFrameType;
+
+
+extern UCHAR bytCurrentFrameType;
+
 int RXOFDMMode = 0;
 
-const char OFDMModes[8][6] = {"PSK2", "PSK4", "PSK8", "QAM16", "PSK16", "QAM32", "Undef", "Undef"};  
+const char OFDMModes[8][6] = {"PSK2", "PSK4", "PSK8", "QAM16", "PSK16", "QAM32", "PSK4S", "Undef"};  
+
+int OFDMFrameLen[8] = {19, 40, 57, 80, 80};		// Bytes per carrier for each submode
 
 int OFDMCarriersReceived[8] = {0};
 int OFDMCarriersDecoded[8] = {0};
@@ -105,7 +116,7 @@ int NextOFDMBlock = 0;
 int UnAckedBlockPtr = 0;
 
 int CarriersSent;
-int BytesSent = 0;
+int BytesSent = 0;							// Sent but not acked
 
 int CarriersACKed;
 int CarriersNAKed;
@@ -189,6 +200,9 @@ extern int intNAKctr;
 extern int intACKctr;
 extern int intTimeouts;
 
+extern UCHAR goodReceivedBlocks[128];
+extern UCHAR goodReceivedBlockLen[128];
+
 void GoertzelRealImag(short intRealIn[], int intPtr, int N, float m, float * dblReal, float * dblImag);
 int ComputeAng1_Ang2(int intAng1, int intAng2);
 int Demod1CarOFDMChar(int Start, int Carrier, int intNumOfSymbols);
@@ -200,6 +214,8 @@ void SendLeaderAndSYNC(UCHAR * bytEncodedBytes, int intLeaderLen);
 void Flush();
 BOOL  CheckCRC16(unsigned char * Data, int Length);
 void CorrectPhaseForTuningOffset(short * intPhase, int intPhaseLength, int intPSKMode);
+BOOL DemodOFDM();
+VOID Gearshift_2(int intAckNakValue, BOOL blnInit);
 
 void GenCRC16Normal(char * Data, int Length)
 {
@@ -219,6 +235,8 @@ void ClearOFDMVariables()
 	memset(UnackedOFDMBlockLen, 0, sizeof(UnackedOFDMBlockLen));
 	NextOFDMBlock = 0;
 	BytesSent = 0;
+	SavedOFDMMode = -1;
+
 	DontSendNewData = LimitNewData = Duplicate = 0;
 	
 	memset(SentOFDMBlocks, 0, sizeof(SentOFDMBlocks));
@@ -232,7 +250,7 @@ void ProcessOFDMNak(int AckType)
 {
 	int AckedPercent;
 
-	// We only get an OFDM NAK if no data is saved, so safe to shift down
+	// We only get a NAK for an OFDM frame if no data is saved, so safe to shift down
 
 	CarriersNAKed += CarriersSent;
 
@@ -521,13 +539,30 @@ int ProcessOFDMAck(int AckType)
 		DontSendNewData = FALSE;
 		Duplicate = LimitNewData = FALSE;
 
+		// If we sent the last frame in a more robust mode (as very short) we shouldn't use success to shift up
+
+		if (bytCurrentFrameType != LastSentOFDMType || OFDMMode != LastSentOFDMMode)
+			return Acked;
+
 		if (AckedPercent > 80 && CarriersACKed >= CarriersSent)
 		{
-			Gearshift_2(2, False);
+			// If we are in Low OFDM mode go up a bit before trying 2500 (up to 4PSK)
+
+			intShiftUpDn = 0;
+
+			if (OFDMMode)							// At least 4FSK
+				Gearshift_2(2, False);				// See if we can up carriers if running PSK
+
 			if (intShiftUpDn)
 			{
 				CarriersACKed = CarriersNAKed = 0;	// Reset counts
-				OFDMMode = PSK4;
+
+				// if going down try PSK4, if up PSK2
+
+				if (intShiftUpDn < 0)
+					OFDMMode = PSK4;
+				else
+					OFDMMode = PSK2;
 			}
 			else
 			{
@@ -635,7 +670,7 @@ void GetOFDMFrameInfo(int OFDMMode, int * intDataLen, int * intRSLen, int * Mode
 
 		*intDataLen = 57;			// Must be multiple of 3
 		*intRSLen = 18;				// Must be multiple of 3 and even (so multiple of 6)
-		*Symbols = 8;
+		*Symbols = 8;				// Actually 8 symbols for 3 bytes
 		*Mode = 8;
 		break;
 
@@ -655,6 +690,23 @@ void GetOFDMFrameInfo(int OFDMMode, int * intDataLen, int * intRSLen, int * Mode
 		*Symbols = 2;
 		*Mode = 8;
 		break;
+
+	case QAM32:
+
+		*intDataLen = 100;
+		*intRSLen = 25;
+		*Symbols = 8;				// Actually 8 symbols for 3 bytes
+		*Mode = 16;
+		break;
+
+	case PSK4S:
+
+		*intDataLen = 12;
+		*intRSLen = 4;
+		*Symbols = 4;
+		*Mode = 4;
+		break;
+
 
 	default:
 				
@@ -710,6 +762,8 @@ int EncodeOFDMData(UCHAR bytFrameType, UCHAR * bytDataToSend, int Length, unsign
 	intEncodedDataPtr = 2;
 
 	UnAckedBlockPtr = 127;		// We send unacked blocks backwards
+
+	// Length is data still queued. BytesSent is unacked data
 
 	Length -= BytesSent;		// New data to send
 
@@ -1537,7 +1591,7 @@ void ModOFDMDataAndPlay(unsigned char * bytEncodedBytes, int Len, int intLeaderL
 	int OFDMFrame[240] = {0};	// accumulated samples for each carrier
 	short OFDMSamples[240];		// 216 data, 24 CP
 	int p, q;					// start at 24, copy CP later
-	char Msg[64];
+	char fType[64];
 
 	if (!FrameInfo(Type, &blnOdd, &intNumCar, strMod, &intBaud, &intDataLen, &intRSLen, &bytMinQualThresh, strType))
 		return;
@@ -1554,6 +1608,7 @@ void ModOFDMDataAndPlay(unsigned char * bytEncodedBytes, int Len, int intLeaderL
 		break;
 
 	case PSK4:
+	case PSK4S:
 
 		s = 4;				// 4 symbols per byte
 		break;
@@ -1590,11 +1645,15 @@ void ModOFDMDataAndPlay(unsigned char * bytEncodedBytes, int Len, int intLeaderL
 	}
 	
 	WriteDebugLog(LOGDEBUG, "Sending Frame Type %s Mode %s", strType, OFDMModes[OFDMMode]);
+	sprintf(fType, "%s/%s", strType, OFDMModes[OFDMMode]); 
+	DrawTXFrame(fType);
 
-	sprintf(Msg, "%s/%s", strType, OFDMModes[OFDMMode]);
-	DrawTXFrame(Msg);
-
-	if (intNumCar == 9)
+	if (intNumCar == 3)
+	{
+		initFilter(500,1500);
+		OFDMLevel = 80;	
+	}
+	else if (intNumCar == 9)
 	{
 		initFilter(500,1500);
 		OFDMLevel = 100;	
@@ -1648,7 +1707,7 @@ PktLoopBack:		// Reenter here to send rest of variable length packet frame
 
 	for (i = intCarStartIndex; i < intCarStartIndex + intNumCar; i++)
 	{
-		if (OFDMMode == PSK4)
+		if (OFDMMode == PSK4 || OFDMMode == PSK4S)
 			bytLastSym[i] <<= 1;
 		else if (OFDMMode == PSK8 || OFDMMode == QAM16)
 			bytLastSym[i] <<= 2;
@@ -1677,7 +1736,7 @@ PktLoopBack:		// Reenter here to send rest of variable length packet frame
 						bytSym = (bytEncodedBytes[intDataPtr + i * intDataBytesPerCar] >> ((7 - k))) & 1;
 						bytSymToSend = ((bytLastSym[intCarIndex] + bytSym) & 1);  // Values 0-1
 					}
-					else if (OFDMMode == PSK4)
+					else if (OFDMMode == PSK4 || OFDMMode == PSK4S)
 					{
 						bytSym = (bytEncodedBytes[intDataPtr + i * intDataBytesPerCar] >> (2 * (3 - k))) & 3;
 						bytSymToSend = ((bytLastSym[intCarIndex] + bytSym) & 3);  // Values 0-3
@@ -1714,7 +1773,7 @@ PktLoopBack:		// Reenter here to send rest of variable length packet frame
 							else
 								OFDMSamples[p++]+= intOFDMTemplate[intCarIndex][0][n];
 						}
-						else if (OFDMMode == PSK4)
+						else if (OFDMMode == PSK4 || OFDMMode == PSK4S)
 						{
 							if (bytSymToSend < 2) // This uses the symmetry of the symbols to reduce the table size by a factor of 2
 								OFDMSamples[p++] += intOFDMTemplate[intCarIndex][4 * bytSymToSend][n]; //  double the symbol value during template lookup for 4PSK. (skips over odd PSK 8 symbols)

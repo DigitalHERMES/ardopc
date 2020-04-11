@@ -233,9 +233,14 @@ unsigned int getTicks()
 	return (tp.tv_sec - time_start.tv_sec) * 1000 + (tp.tv_nsec - time_start.tv_nsec) / 1000000;
 }
 
-void PlatformSleep()
+void PlatformSleep(int mS)
 {
-	Sleep(1);
+	if (SerialMode)
+		SerialHostPoll();
+	else
+		TCPHostPoll();
+
+	Sleep(mS);
 		
 	if (PKTLEDTimer && Now > PKTLEDTimer)
     {
@@ -261,7 +266,6 @@ void PlatformSleep()
 
 extern int pttGPIOPin;
 extern BOOL pttGPIOInvert;
-
 
 
 void SetupGPIOPTT()

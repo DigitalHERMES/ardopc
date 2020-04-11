@@ -628,9 +628,16 @@ void RemodulateLastFrame()
 		Mod4FSKDataAndPlay(bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
 		return;
 	}
+
 	if (strcmp(strMod, "OFDM") == 0)
 	{
+		int save = OFDMMode;
+		OFDMMode = LastSentOFDMMode;
+
 		ModOFDMDataAndPlay(bytEncodedBytes, EncLen, intCalcLeader);  // Modulate Data frame 
+
+		OFDMMode = save;
+
 		return;
 	}
 
