@@ -83,7 +83,7 @@ int RXOFDMMode = 0;
 
 const char OFDMModes[8][6] = {"PSK2", "PSK4", "PSK8", "QAM16", "PSK16", "QAM32", "Undef", "Undef"};  
 
-int OFDMFrameLen[8] = {19, 40, 57, 80, 80};		// Bytes per carrier for eacgh submode
+int OFDMFrameLen[8] = {19, 40, 57, 80, 80};		// Bytes per carrier for each submode
 
 int OFDMCarriersReceived[8] = {0};
 int OFDMCarriersDecoded[8] = {0};
