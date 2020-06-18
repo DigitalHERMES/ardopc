@@ -1,5 +1,5 @@
 # ardopc
-ARDOP (Amateur Radio Digital Open Protocol) OFDM TNC implementation by John Wiseman (GM8BPQ). Unofficial repository.
+ARDOP (Amateur Radio Digital Open Protocol) TNC and SDR modem implementation by John Wiseman (GM8BPQ). Unofficial repository.
 
 Please visit the official documentation:
 http://www.cantab.net/users/john.wiseman/Downloads/Beta/
