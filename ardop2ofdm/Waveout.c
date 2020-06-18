@@ -798,7 +798,7 @@ void SoundFlush()
 //		WriteDebugLog(LOGDEBUG, "Play complete blnEnbARQRpt = %d", blnEnbARQRpt);
 
 	if (blnEnbARQRpt > 0 || blnDISCRepeating)	// Start Repeat Timer if frame should be repeated
-		dttNextPlay = Now + intFrameRepeatInterval;
+		dttNextPlay = Now + intFrameRepeatInterval + extraDelay;
 
 //	WriteDebugLog(LOGDEBUG, "Now %d Now - dttNextPlay 1  = %d", Now, Now - dttNextPlay);
 

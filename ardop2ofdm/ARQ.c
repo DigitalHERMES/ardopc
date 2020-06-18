@@ -133,7 +133,7 @@ int	intTotalSymbols = 0;		// To compute the sample rate error
 
 extern int bytDataToSendLength;
 int intFrameRepeatInterval;
-
+int extraDelay = 0;				// Used for long delay paths eg Satellite
 
 extern int intLeaderRcvdMs;	
 
@@ -598,16 +598,6 @@ UCHAR GenerateSessionID(char * strCallingCallSign, char *strTargetCallsign)
    	return ID;
 
 }
-
-// Function to compute the optimum leader based on the Leader sent and the reported Received leader
-
-void CalculateOptimumLeader(int intReportedReceivedLeaderMS,int  intLeaderSentMS)
-{
-	intCalcLeader = max(200, 120 + intLeaderSentMS - intReportedReceivedLeaderMS);  //  This appears to work well on HF sim tests May 31, 2015
-    //    WriteDebugLog(LOGDEBUG, ("[ARDOPprotocol.CalcualteOptimumLeader] Leader Sent=" & intLeaderSentMS.ToString & "  ReportedReceived=" & intReportedReceivedLeaderMS.ToString & "  Calculated=" & stcConnection.intCalcLeader.ToString)
-}
-
- 
 
 // Function to determine if call is to Callsign or one of the AuxCalls
 
@@ -1468,7 +1458,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 
 				intReceivedLeaderLen = intLeaderRcvdMs;		 // capture the received leader from the remote ISS's ConReq (used for timing optimization)
 				dttLastFECIDSent = Now;
-				EncodeAndSend4FSKControl(ConAck, bytPendingSessionID, 200);
+				EncodeAndSend4FSKControl(ConAck, bytPendingSessionID, LeaderLength);
 			}
 			else
 			{
@@ -2033,9 +2023,7 @@ void ProcessRcvdARQFrame(UCHAR intFrameType, UCHAR * bytData, int DataLen, BOOL 
 				//WriteDebugLog(LOGDEBUG, ("[ARDOPprotocol.ProcessRcvdARQFrame] ISS Measured RoundTrip = " & intARQRTmeasuredMs.ToString & " ms")
 
 				intSessionBW = atoi(ARQBandwidths[ARQBandwidth]);
-    			
-				CalculateOptimumLeader(10 * bytData[0], LeaderLength);
-	
+    				
 				// Initialize the frame type based on bandwidth
 			
 				GetNextFrameData(&intShiftUpDn, &bytDummy, NULL, TRUE);	// just sets the initial data frame type and sets intShiftUpDn = 0

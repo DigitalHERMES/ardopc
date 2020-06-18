@@ -263,12 +263,12 @@ int CtlMode[16]	= {			// Control frames are sent in faster modes but not full sp
 			5, 6, 6, 6,
 			9, 9, 9 ,9};
 
-int initMaxFrame = 7;	// Will be overriden depending on Mode
+int initMaxFrame = 2;	// Will be overriden depending on Mode
 int initPacLen = 0;
 
 const int defaultPacLen[16] = {
-			32,
-			32, 64, 64, 64,
+			64,
+			64, 64, 64, 64,
 			64, 128, 128, 128,
 			128, 256, 256, 256};
 
@@ -579,7 +579,7 @@ struct _LINKTABLE * NewLink()
 		LINK->PACLEN = initPacLen;			// Starting Point
 
 
-	initMaxFrame = 7;
+	initMaxFrame = 4;
 
 	LINK->LINKWINDOW = initMaxFrame;		// Starting Point
 

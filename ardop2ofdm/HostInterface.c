@@ -657,7 +657,32 @@ void ProcessCommandFromHost(char * strCMD)
 		goto cmddone;
 	}
 
+	if (strcmp(strCMD, "EXTRADELAY") == 0)
+	{
+		int i;
 
+		if (ptrParams == 0)
+		{
+			sprintf(cmdReply, "%s %d", strCMD, extraDelay);
+			SendReplyToHost(cmdReply);
+			goto cmddone;
+		}
+		else
+		{
+			i = atoi(ptrParams);
+
+			if (i >= 0)	
+			{
+				extraDelay = i;
+				sprintf(cmdReply, "%s now %d", strCMD, extraDelay);
+				SendReplyToHost(cmdReply);
+			}
+			else
+				sprintf(strFault, "Syntax Err: %s %s", strCMD, ptrParams);	
+		}
+		goto cmddone;
+	}
+  
 	if (strcmp(strCMD, "FECID") == 0)
 	{
 		DoTrueFalseCmd(strCMD, ptrParams, &FECId);

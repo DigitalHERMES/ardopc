@@ -621,6 +621,7 @@ extern int bytValidFrameTypesLengthISS;
 
 extern BOOL blnTimeoutTriggered;
 extern int intFrameRepeatInterval;
+extern int extraDelay;
 extern BOOL PlayComplete;
 
 extern const UCHAR bytValidFrameTypesALL[];

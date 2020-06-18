@@ -1582,7 +1582,7 @@ void SoundFlush()
 	SoundIsPlaying = FALSE;
 
 	if (blnEnbARQRpt > 0 || blnDISCRepeating)	// Start Repeat Timer if frame should be repeated
-		dttNextPlay = Now + intFrameRepeatInterval;
+		dttNextPlay = Now + intFrameRepeatInterval + extraDelay;
 
 	KeyPTT(FALSE);		 // Unkey the Transmitter
 

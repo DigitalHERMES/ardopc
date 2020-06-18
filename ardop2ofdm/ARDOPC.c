@@ -15,7 +15,7 @@
 #include "Version.h"
 
 #include "ARDOPC.h"
-#include <getopt.h>
+#include "getopt.h"
 
 void CompressCallsign(char * Callsign, UCHAR * Compressed);
 void CompressGridSquare(char * Square, UCHAR * Compressed);
@@ -208,7 +208,6 @@ extern char strLocalCallsign[10];
 extern char strFinalIDCallsign[10];
 extern int dttTimeoutTrip;
 extern unsigned int dttLastFECIDSent;
-extern int intFrameRepeatInterval;
 extern BOOL blnPending;
 extern unsigned int tmrIRSPendingTimeout;
 extern unsigned int tmrFinalID;
@@ -3007,6 +3006,8 @@ static struct option long_options[] =
 	{"cat",  required_argument, 0 , 'c'},
 	{"keystring",  required_argument, 0 , 'k'},
 	{"unkeystring",  required_argument, 0 , 'u'},
+	{"extradelay",  required_argument, 0 , 'e'},
+	{"leaderlength",  required_argument, 0 , 'x'},
 	{"help",  no_argument, 0 , 'h'},
 	{ NULL , no_argument , NULL , no_argument }
 };
@@ -3032,6 +3033,8 @@ char HelpScreen[] =
 	"-u string or --unkeystring string String (In HEX) to send to the radio to unkeykey PTT\n"
 	"-L use Left Channel of Soundcard in stereo mode\n"
 	"-R use Right Channel of Soundcard in stereo mode\n"
+	"-e val or --extradelay val        Extend no response timeot for use on paths with long delay\n"
+	"--leaderlength val                Sets Leader Length (mS)\n"
 	"\n"
 	" CAT and RTS PTT can share the same port.\n"
 	" See the ardop documentation for more information on cat and ptt options\n"
@@ -3048,7 +3051,7 @@ VOID processargs(int argc, char * argv[])
 	{		
 		int option_index = 0;
 
-		c = getopt_long(argc, argv, "l:c:p:g::k:u:hLR", long_options, &option_index);
+		c = getopt_long(argc, argv, "l:c:p:g::k:u:e:hLR", long_options, &option_index);
 
 		// Check for end of operation or error
 		if (c == -1)
@@ -3147,6 +3150,14 @@ VOID processargs(int argc, char * argv[])
 		case 'R':
 			UseLeft = 0;
 			UseRight = 1;
+			break;
+
+		case 'e':
+			extraDelay = atoi(optarg);
+			break;
+
+		case 'x':
+			LeaderLength = atoi(optarg);
 			break;
 
 		case '?':

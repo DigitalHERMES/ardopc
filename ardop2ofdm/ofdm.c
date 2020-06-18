@@ -541,8 +541,8 @@ int ProcessOFDMAck(int AckType)
 
 		// If we sent the last frame in a more robust mode (as very short) we shouldn't use success to shift up
 
-		if (bytCurrentFrameType != LastSentOFDMType || OFDMMode != LastSentOFDMMode)
-			return Acked;
+//		if (bytCurrentFrameType != LastSentOFDMType || OFDMMode != LastSentOFDMMode)
+//			return Acked;
 
 		if (AckedPercent > 80 && CarriersACKed >= CarriersSent)
 		{
