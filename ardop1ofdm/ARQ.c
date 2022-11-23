@@ -178,7 +178,7 @@ int intAvgFSKQuality;
 int intFrameSyncs;
 int intGoodPSKSummationDecodes;
 int intGoodFSKSummationDecodes;
-int intGoodQAMSummationDecodes;
+extern int intGoodQAMSummationDecodes;
 int intGoodOFDMSummationDecodes;
 int intGoodOFDMFrameDataDecodes;
 int intGoodOFDMFrameDataDecodes = 0;

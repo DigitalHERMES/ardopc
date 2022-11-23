@@ -2631,11 +2631,11 @@ BOOL MainPoll()
 int dttLastBusy;
 int dttLastClear;
 int dttStartRTMeasure;
-int intLastStart;
-int intLastStop;
-float dblAvgBaselineSlow;
-float dblAvgBaselineFast;
-float dblAvgPk2BaselineRatio;
+extern int intLastStart;
+extern int intLastStop;
+extern float dblAvgBaselineSlow;
+extern float dblAvgBaselineFast;
+extern float dblAvgPk2BaselineRatio;
 
 //  Functino to extract bandwidth from ARQBandwidth
 

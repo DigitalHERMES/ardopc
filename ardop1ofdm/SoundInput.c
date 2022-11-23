@@ -56,7 +56,7 @@ extern int NErrors;
 extern BOOL blnBREAKCmd;
 extern UCHAR bytLastACKedDataFrameType;
 extern int intARQDefaultDlyMs;
-unsigned int tmrFinalID;
+extern unsigned int tmrFinalID;
 extern BOOL PKTCONNECTED;
 void DrawDecode(char * Decode);
 void RemoveProcessedOFDMData();
