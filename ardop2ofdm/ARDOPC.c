@@ -153,7 +153,7 @@ int intOFDMSymbolsDecoded;
 int intQAMQuality;
 int intQAMQualityCnts;
 int intQAMSymbolsDecoded;
-extern int intGoodQAMSummationDecodes;
+int intGoodQAMSummationDecodes;
 
 
 char stcLastPingstrSender[10];
