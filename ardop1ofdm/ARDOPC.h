@@ -3,14 +3,14 @@
 #ifndef ARDOPCHEADERDEFINED
 #define ARDOPCHEADERDEFINED
 
-#define ProductName "ARDOP TNC"
-#define ProductVersion "1.0.4.1q-OFDMBPQ"
+extern const char ProductName[];
+extern const char ProductVersion[];
+
 
 #ifdef CONST
 #undef CONST
 #endif
 #define CONST const	// for building sample arrays
-
 
 //#define USE_SOUNDMODEM
 
