@@ -49,7 +49,7 @@ VOID ptkSessionBG();
 
 
 
-HANDLE hDevice;
+extern HANDLE hDevice;
 
 char KISSPORTNAME[80] = "";  // for now just support over Host Interface;
 

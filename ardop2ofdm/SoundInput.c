@@ -57,7 +57,7 @@ extern int NErrors;
 extern BOOL blnBREAKCmd;
 extern UCHAR bytLastACKedDataFrameType;
 extern int intARQDefaultDlyMs;
-unsigned int tmrFinalID;
+extern unsigned int tmrFinalID;
 extern BOOL PKTCONNECTED;
 extern int LastDemodType;
 
